@@ -349,7 +349,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
 
-    def fwd_policy_fn_metrics(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
+    def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -363,7 +363,7 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     metrics_module = MultiMetricsModule({
         "topk": TopKMetricsModule(
-            fwd_policy_fn=fwd_policy_fn_metrics,
+            fwd_policy_fn=fwd_policy_fn,
             env=env,
             num_traj=cfg.metrics.num_traj,
             batch_size=cfg.metrics.batch_size,  # Ignored for a moment
@@ -403,7 +403,8 @@ def run_experiment(cfg: OmegaConf) -> None:
     if cfg.logging.use_writer:
         log.info("Initialize writer")
         log_dir = os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"db_amp_comp_run_{os.getpid()}/"
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, 
+            f"db_amp_comp_run_{os.getpid()}/"
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
