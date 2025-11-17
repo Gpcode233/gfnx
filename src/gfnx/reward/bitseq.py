@@ -1,13 +1,11 @@
 """Reward functions used for hypergrid environment"""
 
-
 import chex
 import jax
 import jax.numpy as jnp
 
-import gfnx
-from gfnx import BitseqEnvParams, BitseqEnvState
-from ..base import BaseRewardModule
+from ..base import BaseRewardModule, TLogReward, TReward, TRewardParams
+from ..environment import BitseqEnvParams, BitseqEnvState
 from ..utils import (
     construct_mode_set,
     detokenize,
@@ -15,9 +13,7 @@ from ..utils import (
 )
 
 
-class BitseqRewardModule(
-    BaseRewardModule[BitseqEnvState, BitseqEnvParams]
-):
+class BitseqRewardModule(BaseRewardModule[BitseqEnvState, BitseqEnvParams]):
     def __init__(
         self,
         sentence_len: int = 120,
@@ -47,7 +43,7 @@ class BitseqRewardModule(
 
     def init(
         self, rng_key: chex.PRNGKey, dummy_state: BitseqEnvState
-    ) -> gfnx.TRewardParams:
+    ) -> TRewardParams:
         return {
             "mode_set": construct_mode_set(
                 self.sentence_len,
@@ -60,16 +56,17 @@ class BitseqRewardModule(
 
     def log_reward(
         self, state: BitseqEnvState, env_params: BitseqEnvParams
-    ) -> gfnx.TLogReward:
+    ) -> TLogReward:
         def single_log_reward(tokens, reward_params):
             bitseq = detokenize(tokens, self.k)
             mode_dist = mode_set_distance(bitseq, reward_params["mode_set"])
             return -self.reward_exponent * mode_dist.astype(jnp.float32)
-        return -jax.vmap(
-            single_log_reward, in_axes=(0, None)
-        )(state.tokens, env_params.reward_params)
-    
+
+        return -jax.vmap(single_log_reward, in_axes=(0, None))(
+            state.tokens, env_params.reward_params
+        )
+
     def reward(
         self, state: BitseqEnvState, env_params: BitseqEnvParams
-    ) -> gfnx.TReward:
+    ) -> TReward:
         return jnp.exp(self.log_reward(state, env_params))

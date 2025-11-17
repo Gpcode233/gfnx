@@ -1,6 +1,6 @@
-'''
+"""
 Technical details for protein generation tasks
-'''
+"""
 
 AMINO_ACIDS = [
     "A",

@@ -1,6 +1,4 @@
-import gfnx.spaces as spaces
-import gfnx.utils as utils
-
+from . import metrics, networks, spaces, utils
 from .base import (
     TAction,
     TBackwardAction,
@@ -27,23 +25,21 @@ from .environment import (
     HypergridEnvironment,
     HypergridEnvParams,
     HypergridEnvState,
-    PhylogeneticTreeEnvironment,
-    PhylogeneticTreeEnvParams,
-    PhylogeneticTreeEnvState,
 )
 from .reward import (
     BitseqRewardModule,
     EasyHypergridRewardModule,
     GeneralHypergridRewardModule,
     HardHypergridRewardModule,
-    PhylogeneticTreeRewardModule,
     ProxyAMPRewardModule,
     ProxyGFPRewardModule,
 )
 
 __all__ = [
-    "utils",
+    "metrics",
+    "networks",
     "spaces",
+    "utils",
     "AMPEnvironment",
     "AMPEnvParams",
     "AMPEnvState",
@@ -73,8 +69,4 @@ __all__ = [
     "TReward",
     "TRewardModule",
     "TRewardParams",
-    PhylogeneticTreeEnvironment,
-    PhylogeneticTreeEnvParams,
-    PhylogeneticTreeEnvState,
-    PhylogeneticTreeRewardModule,
 ]

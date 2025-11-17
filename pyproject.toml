@@ -13,7 +13,9 @@ dependencies = [
   "jax>=0.4.27.0",
   "jaxlib>=0.4.27.0",
   "chex",
-  "levenshtein"
+  "levenshtein",
+  "numpy==1.26.4",
+  "jaxtyping"
 ]
 authors = [
   { name="Daniil Tiapkin", email="daniil.tiapkin@polytechnique.edu" },
@@ -28,11 +30,12 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-algs = [
+baselines = [
   "optax",
-  "flax",
-  "distrax",
-  "flashbax"
+  "equinox",
+  "flashbax",
+  "wandb",
+  "orbax-checkpoint"
 ]
 
 [project.urls]
@@ -58,6 +61,7 @@ target-version = "py310"
 # overlap with the use of a formatter, like Black, but we can override this behavior by
 # explicitly adding the rule.
 extend-select = ["E501"]
+ignore = [ "F722" ]
 
 
 [tool.ruff.lint.pydocstyle]

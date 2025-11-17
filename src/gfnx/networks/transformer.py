@@ -1,150 +1,320 @@
-"""Neural networks for different environments"""
+"""A generic transformer network for policies and proxies.
 
-import math
+See https://docs.kidger.site/equinox/examples/bert/ for the source.
+"""
 
-from dataclasses import dataclass
 import chex
-import flax.linen as nn
+import equinox as eqx
 import jax
 import jax.numpy as jnp
-import numpy as np
+from jaxtyping import Array, Float, Int
 
 
-@dataclass
-class TransformerEncoderConfig:
-    max_len: int = 2048
-    num_heads: int = 8
-    num_layers: int = 3
+class EmbedderBlock(eqx.Module):
+    """Transformer embedder."""
 
-    mlp_dim: int = 64
-    qkv_dim: int = 64
-    emb_dim: int = 64
+    token_embedder: eqx.nn.Embedding
+    position_embedder: eqx.nn.Embedding
+    layernorm: eqx.nn.LayerNorm
+    dropout: eqx.nn.Dropout
 
-    dtype: jnp.dtype = jnp.float32
+    def __init__(
+        self,
+        vocab_size: int,
+        max_length: int,
+        embedding_size: int,
+        hidden_size: int,
+        dropout_rate: float,
+        *,
+        key: chex.PRNGKey,
+    ):
+        token_key, position_key = jax.random.split(key)
 
-    dropout_rate: float = 0.1
-    vocab_size: int = 256
-
-
-class PositionalEncoding(nn.Module):
-    config: TransformerEncoderConfig
-
-    def setup(self):
-        # Create matrix of [SeqLen, HiddenDim] representing the positional encoding for max_len inputs
-        pe = np.zeros((self.config.max_len, self.config.emb_dim))
-        position = np.arange(0, self.config.max_len, dtype=np.float32)[:, None]
-        div_term = np.exp(
-            np.arange(0, self.config.emb_dim, 2)
-            * (-math.log(10000.0) / self.config.emb_dim)
+        self.token_embedder = eqx.nn.Embedding(
+            num_embeddings=vocab_size,
+            embedding_size=embedding_size,
+            key=token_key,
         )
-        pe[:, 0::2] = np.sin(position * div_term)
-        pe[:, 1::2] = np.cos(position * div_term)
-        pe = pe[None]
-        self.pe = jax.device_put(pe)
+        self.position_embedder = eqx.nn.Embedding(
+            num_embeddings=max_length,
+            embedding_size=embedding_size,
+            key=position_key,
+        )
+        self.layernorm = eqx.nn.LayerNorm(shape=hidden_size)
+        self.dropout = eqx.nn.Dropout(dropout_rate)
 
-    def __call__(self, x) -> chex.Array:
-        x = x + self.pe[:, : x.shape[1]]
-        return x
+    def __call__(
+        self,
+        token_ids: Int[Array, " seq_len"],
+        position_ids: Int[Array, " seq_len"],
+        enable_dropout: bool = False,
+        key: chex.PRNGKey | None = None,
+    ) -> Float[Array, "seq_len hidden_size"]:
+        tokens = jax.vmap(self.token_embedder)(token_ids)
+        positions = jax.vmap(self.position_embedder)(position_ids)
+        embedded_inputs = tokens + positions
+        embedded_inputs = jax.vmap(self.layernorm)(embedded_inputs)
+        embedded_inputs = self.dropout(
+            embedded_inputs, inference=not enable_dropout, key=key
+        )
+        return embedded_inputs
 
 
-class TransformerMLPBlock(nn.Module):
-    """Transformer MLP / feed-forward block.
-    Simplified version of the original code from Flax:
-    https://github.com/google/flax/blob/main/examples/wmt/models.py
+class FeedForwardBlock(eqx.Module):
+    """A single transformer feed forward block."""
 
-    Attributes:
-        config: TransformerConfig dataclass containing hyperparameters.
-        out_dim: optionally specify out dimension.
-    """
+    mlp: eqx.nn.Linear
+    output: eqx.nn.Linear
+    layernorm: eqx.nn.LayerNorm
+    dropout: eqx.nn.Dropout
 
-    config: TransformerEncoderConfig
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        dropout_rate: float,
+        *,
+        key: chex.PRNGKey,
+    ):
+        mlp_key, output_key = jax.random.split(key)
+        self.mlp = eqx.nn.Linear(
+            in_features=hidden_size,
+            out_features=intermediate_size,
+            key=mlp_key,
+        )
+        self.output = eqx.nn.Linear(
+            in_features=intermediate_size,
+            out_features=hidden_size,
+            key=output_key,
+        )
 
-    @nn.compact
-    def __call__(self, inputs: chex.Array, training: bool) -> chex.Array:
-        """Applies Transformer MlpBlock module."""
-        config = self.config
-        actual_out_dim = inputs.shape[-1]
-        x = nn.Dense(features=config.mlp_dim, dtype=jnp.float32)(inputs)
-        x = nn.relu(x)
-        x = nn.Dropout(rate=config.dropout_rate)(x, deterministic=not training)
-        output = nn.Dense(features=actual_out_dim, dtype=jnp.float32)(x)
-        output = nn.Dropout(rate=config.dropout_rate)(
-            output, deterministic=not training
+        self.layernorm = eqx.nn.LayerNorm(shape=hidden_size)
+        self.dropout = eqx.nn.Dropout(dropout_rate)
+
+    def __call__(
+        self,
+        inputs: Float[Array, " hidden_size"],
+        enable_dropout: bool = True,
+        key: chex.PRNGKey | None = None,
+    ) -> Float[Array, " hidden_size"]:
+        # Feed-forward.
+        hidden = self.mlp(inputs)
+        hidden = jax.nn.gelu(hidden)
+
+        # Project back to input size.
+        output = self.output(hidden)
+        output = self.dropout(output, inference=not enable_dropout, key=key)
+
+        # Residual and layer norm.
+        output += inputs
+        output = self.layernorm(output)
+
+        return output
+
+
+class AttentionBlock(eqx.Module):
+    """A single transformer attention block."""
+
+    attention: eqx.nn.MultiheadAttention
+    layernorm: eqx.nn.LayerNorm
+    dropout: eqx.nn.Dropout
+    num_heads: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        dropout_rate: float,
+        attention_dropout_rate: float,
+        *,
+        key: chex.PRNGKey,
+    ):
+        self.num_heads = num_heads
+        self.attention = eqx.nn.MultiheadAttention(
+            num_heads=num_heads,
+            query_size=hidden_size,
+            use_query_bias=True,
+            use_key_bias=True,
+            use_value_bias=True,
+            use_output_bias=True,
+            dropout_p=attention_dropout_rate,
+            key=key,
+        )
+        self.layernorm = eqx.nn.LayerNorm(shape=hidden_size)
+        self.dropout = eqx.nn.Dropout(dropout_rate)
+
+    def __call__(
+        self,
+        inputs: Float[Array, "seq_len hidden_size"],
+        mask: Int[Array, " seq_len"] | None,
+        enable_dropout: bool = False,
+        key: chex.PRNGKey = None,
+    ) -> Float[Array, "seq_len hidden_size"]:
+        if mask is not None:
+            mask = self.make_self_attention_mask(mask)
+        attention_key, dropout_key = (
+            (None, None) if key is None else jax.random.split(key)
+        )
+
+        attention_output = self.attention(
+            query=inputs,
+            key_=inputs,
+            value=inputs,
+            mask=mask,
+            inference=not enable_dropout,
+            key=attention_key,
+        )
+
+        result = attention_output
+        result = self.dropout(
+            result, inference=not enable_dropout, key=dropout_key
+        )
+        result = result + inputs
+        result = jax.vmap(self.layernorm)(result)
+        return result
+
+    def make_self_attention_mask(
+        self, mask: Int[Array, " seq_len"]
+    ) -> Float[Array, "num_heads seq_len seq_len"]:
+        """Create self-attention mask from sequence-level mask."""
+        mask = jnp.multiply(
+            jnp.expand_dims(mask, axis=-1), jnp.expand_dims(mask, axis=-2)
+        )
+        mask = jnp.expand_dims(mask, axis=-3)
+        mask = jnp.repeat(mask, repeats=self.num_heads, axis=-3)
+        return mask.astype(jnp.float32)
+
+
+class TransformerLayer(eqx.Module):
+    """A single transformer layer."""
+
+    attention_block: AttentionBlock
+    ff_block: FeedForwardBlock
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        num_heads: int,
+        dropout_rate: float,
+        attention_dropout_rate: float,
+        *,
+        key: chex.PRNGKey,
+    ):
+        attention_key, ff_key = jax.random.split(key)
+
+        self.attention_block = AttentionBlock(
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            dropout_rate=dropout_rate,
+            attention_dropout_rate=attention_dropout_rate,
+            key=attention_key,
+        )
+        self.ff_block = FeedForwardBlock(
+            hidden_size=hidden_size,
+            intermediate_size=intermediate_size,
+            dropout_rate=dropout_rate,
+            key=ff_key,
+        )
+
+    def __call__(
+        self,
+        inputs: Float[Array, "seq_len hidden_size"],
+        mask: Int[Array, " seq_len"] | None = None,
+        *,
+        enable_dropout: bool = False,
+        key: chex.PRNGKey | None = None,
+    ) -> Float[Array, "seq_len hidden_size"]:
+        attn_key, ff_key = (
+            (None, None) if key is None else jax.random.split(key)
+        )
+        attention_output = self.attention_block(
+            inputs, mask, enable_dropout=enable_dropout, key=attn_key
+        )
+        seq_len = inputs.shape[0]
+        ff_keys = (
+            None if ff_key is None else jax.random.split(ff_key, num=seq_len)
+        )
+        output = jax.vmap(self.ff_block, in_axes=(0, None, 0))(
+            attention_output, enable_dropout, ff_keys
         )
         return output
 
 
-class EncoderBlock(nn.Module):
-    """Transformer encoder layer.
+class Encoder(eqx.Module):
+    """Full transformer encoder."""
 
-    Simplified version of the original code from Flax:
-    https://github.com/google/flax/blob/main/examples/wmt/models.py
+    embedder_block: EmbedderBlock
+    layers: list[TransformerLayer]
+    pad_id: int
 
-    Attributes:
-        config: TransformerConfig dataclass containing hyperparameters.
-    """
+    def __init__(
+        self,
+        vocab_size: int,
+        max_length: int,
+        embedding_size: int,
+        hidden_size: int,
+        intermediate_size: int,
+        num_layers: int,
+        num_heads: int,
+        dropout_rate: float,
+        attention_dropout_rate: float = 0.0,
+        pad_id: int = 0,
+        *,
+        key: chex.PRNGKey,
+    ):
+        self.pad_id = pad_id  # Padding token to identify masks
+        embedder_key, layer_key = jax.random.split(key, num=2)
+        self.embedder_block = EmbedderBlock(
+            vocab_size=vocab_size,
+            max_length=max_length,
+            embedding_size=embedding_size,
+            hidden_size=hidden_size,
+            dropout_rate=dropout_rate,
+            key=embedder_key,
+        )
 
-    config: TransformerEncoderConfig
-
-    @nn.compact
-    def __call__(self, inputs : chex.Array, training: bool, encoder_mask=None) -> chex.Array:
-        config = self.config
-
-        assert inputs.ndim == 3
-        x = nn.MultiHeadAttention(
-            num_heads=config.num_heads,
-            dtype=jnp.float32,
-            qkv_features=config.qkv_dim,
-            use_bias=True,
-            broadcast_dropout=False,
-            dropout_rate=0.0,  # It is dropout inside of attention mask, turned off by default
-            deterministic=not training,
-            precision=jax.lax.Precision("float32"),
-        )(inputs, mask=encoder_mask)
-        x = nn.Dropout(rate=config.dropout_rate)(x, deterministic=not training)
-        x = x + inputs
-        x = nn.LayerNorm(dtype=jnp.float32)(x)
-        y = TransformerMLPBlock(config=config)(x, training)
-        return nn.LayerNorm(dtype=jnp.float32)(x + y)
-
-
-class TransformerEncoder(nn.Module):
-    """Transformer Model Encoder for sequence to sequence translation.
-
-    Attributes:
-        config: TransformerConfig dataclass containing hyperparameters.
-        shared_embedding: a shared embedding layer to use.
-    """
-
-    config: TransformerEncoderConfig
-
-    @nn.compact
-    def __call__(self, inputs, training: bool, encoder_mask=None):
-        """Applies Transformer model on the inputs.
-
-        Args:
-        inputs: input data
-        inputs_positions: input subsequence positions for packed examples.
-        encoder_mask: encoder self-attention mask.
-
-        Returns:
-        output of a transformer encoder.
-        """
-        config = self.config
-        assert inputs.ndim == 2  # (batch, len)
-
-        x = nn.Embed(
-            num_embeddings=config.vocab_size,
-            features=config.emb_dim,
-            embedding_init=nn.initializers.normal(stddev=1.0),
-            dtype=jnp.float32,
-        )(inputs)
-        x = PositionalEncoding(config=config)(x)
-        x = nn.Dropout(rate=config.dropout_rate, deterministic=not training)(x)
-        x = x.astype(jnp.float32)
-        # Input Encoder
-        for lyr in range(config.num_layers):
-            x = EncoderBlock(config=config, name=f"encoderblock_{lyr+1}")(
-                x, training, encoder_mask
+        layer_keys = jax.random.split(layer_key, num=num_layers)
+        self.layers = []
+        for layer_key in layer_keys:
+            self.layers.append(
+                TransformerLayer(
+                    hidden_size=hidden_size,
+                    intermediate_size=intermediate_size,
+                    num_heads=num_heads,
+                    dropout_rate=dropout_rate,
+                    attention_dropout_rate=attention_dropout_rate,
+                    key=layer_key,
+                )
             )
-        return x
+
+    def __call__(
+        self,
+        token_ids: Int[Array, " seq_len"],
+        position_ids: Int[Array, " seq_len"],
+        *,
+        enable_dropout: bool = False,
+        key: chex.PRNGKey | None = None,
+    ) -> dict[str, Array]:
+        emb_key, l_key = (None, None) if key is None else jax.random.split(key)
+
+        embeddings = self.embedder_block(
+            token_ids=token_ids,
+            position_ids=position_ids,
+            enable_dropout=enable_dropout,
+            key=emb_key,
+        )
+
+        # We assume that all pad_id values should be masked out.
+        mask = jnp.asarray(token_ids != self.pad_id, dtype=jnp.int32)
+
+        x = embeddings
+        layer_outputs = []
+        for layer in self.layers:
+            cl_key, l_key = (
+                (None, None) if l_key is None else jax.random.split(l_key)
+            )
+            x = layer(x, mask, enable_dropout=enable_dropout, key=cl_key)
+            layer_outputs.append(x)
+
+        return {"embeddings": embeddings, "layers_out": layer_outputs}

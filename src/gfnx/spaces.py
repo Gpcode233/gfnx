@@ -69,7 +69,9 @@ class Box(Space):
         """Check whether specific object is within space."""
         # type_cond = isinstance(x, self.dtype)
         # shape_cond = (x.shape == self.shape)
-        range_cond = jnp.logical_and(jnp.all(x >= self.low), jnp.all(x <= self.high))
+        range_cond = jnp.logical_and(
+            jnp.all(x >= self.low), jnp.all(x <= self.high)
+        )
         return range_cond
 
 
@@ -83,12 +85,10 @@ class Dict(Space):
     def sample(self, rng: chex.PRNGKey) -> Any:  # Dict:
         """Sample random action from all subspaces."""
         key_split = jax.random.split(rng, self.num_spaces)
-        return collections.OrderedDict(
-            [
-                (k, self.spaces[k].sample(key_split[i]))
-                for i, k in enumerate(self.spaces)
-            ]
-        )
+        return collections.OrderedDict([
+            (k, self.spaces[k].sample(key_split[i]))
+            for i, k in enumerate(self.spaces)
+        ])
 
     def contains(self, x: Any) -> bool:
         """Check whether dimensions of object are within subspace."""
@@ -111,7 +111,9 @@ class Tuple(Space):
     def sample(self, rng: chex.PRNGKey) -> Any:  # Tuple[chex.Array]:
         """Sample random action from all subspaces."""
         key_split = jax.random.split(rng, self.num_spaces)
-        return tuple([s.sample(key_split[i]) for i, s in enumerate(self.spaces)])
+        return tuple([
+            s.sample(key_split[i]) for i, s in enumerate(self.spaces)
+        ])
 
     def contains(self, x: Sequence) -> bool:
         """Check whether dimensions of object are within subspace."""

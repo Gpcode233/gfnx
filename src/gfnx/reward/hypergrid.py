@@ -1,14 +1,13 @@
 """Reward functions used for hypergrid environment"""
+
 import chex
 import jax.numpy as jnp
 
-import gfnx
-from gfnx import (
+from ..base import BaseRewardModule, TLogReward, TReward
+from ..environment import (
     HypergridEnvParams,
     HypergridEnvState,
 )
-
-from ..base import BaseRewardModule
 
 
 class GeneralHypergridRewardModule(
@@ -22,8 +21,8 @@ class GeneralHypergridRewardModule(
             + R2 \cdot \prod_{d=1}^D \ind\{ | s^d/(H-1) - 0.5| \in (0.3, 0.4) \}
         $$
 
-        Source: Madan, Kanika, et al. "Learning gflownets from partial episodes 
-        for improved convergence and stability." 
+        Source: Madan, Kanika, et al. "Learning gflownets from partial episodes
+        for improved convergence and stability."
         International Conference on Machine Learning. PMLR, 2023.
         """  # noqa: E501
         self.R0 = R0
@@ -38,7 +37,7 @@ class GeneralHypergridRewardModule(
 
     def reward(
         self, state: HypergridEnvState, env_params: HypergridEnvParams
-    ) -> gfnx.TReward:
+    ) -> TReward:
         state = state.state
         ax = jnp.abs(state / (env_params.side - 1) - 0.5)
         reward = (
@@ -46,12 +45,12 @@ class GeneralHypergridRewardModule(
             + jnp.prod((ax > 0.25), axis=-1) * self.R1
             + jnp.prod((ax < 0.4) * (ax > 0.3), axis=-1) * self.R2
         )
-        chex.assert_shape(reward, (state.shape[0],))    # [B]
+        chex.assert_shape(reward, (state.shape[0],))  # [B]
         return jnp.clip(reward, a_min=self.min_reward)
-    
+
     def log_reward(
         self, state: HypergridEnvState, env_params: HypergridEnvParams
-    ) -> gfnx.TLogReward:
+    ) -> TLogReward:
         return jnp.log(self.reward(state, env_params))
 
 

@@ -63,7 +63,7 @@ def detokenize(tokens: chex.Array, k: int):
 
         def loop_fn(i, loop_carry):
             word, result = loop_carry
-            result = result.at[k - i - 1].set(word % 2)
+            result = result.at[k - i - 1].set(jnp.astype(word % 2, jnp.bool))
             word = word // 2
             return word, result
 
@@ -85,7 +85,7 @@ def construct_binary_test_set(rng_key: chex.PRNGKey, mode_set: chex.Array):
                 choice_key, len_mode, shape=(cnt,), replace=False
             )
             change_mask = jnp.zeros(len_mode, dtype=jnp.bool)
-            change_mask = change_mask.at[subset].set(1)
+            change_mask = change_mask.at[subset].set(True)
             test_set.append(jnp.logical_xor(mode, change_mask))
             assert len(test_set[-1]) == len_mode
             assert distance(test_set[-1], mode) == cnt

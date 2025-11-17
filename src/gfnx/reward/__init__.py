@@ -6,7 +6,6 @@ from .hypergrid import (
     GeneralHypergridRewardModule,
     HardHypergridRewardModule,
 )
-from .phylogenetic_tree import PhylogeneticTreeRewardModule
 
 __all__ = [
     "BitseqRewardModule",
@@ -15,5 +14,4 @@ __all__ = [
     "HardHypergridRewardModule",
     "ProxyAMPRewardModule",
     "ProxyGFPRewardModule",
-    "PhylogeneticTreeRewardModule",
 ]
