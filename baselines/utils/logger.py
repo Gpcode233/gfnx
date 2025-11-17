@@ -132,8 +132,6 @@ class Writer:
             self.backend = None
 
         self.log_dir = log_dir if save_locally else None
-        self.image_dir = os.path.join(self.log_dir, "images/")
-        os.makedirs(self.image_dir, exist_ok=True)
 
         self._step = 0
         self._image_counter = 0
@@ -201,7 +199,8 @@ class Writer:
             str: Path to saved image file
         """
 
-        image_path = os.path.join(self.image_dir, f"image_{self._image_counter:04d}.png")
+        image_path = os.path.join(self.log_dir, "images/", f"image_{self._image_counter:04d}.png")
+        os.makedirs(os.path.dirname(image_path), exist_ok=True)
         self._image_counter += 1
         image.save(image_path)
 
