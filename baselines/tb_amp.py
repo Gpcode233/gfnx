@@ -480,8 +480,8 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     def amp_distance_fn(lhs_state: gfnx.AMPEnvState, rhs_state: gfnx.AMPEnvState) -> chex.Array:
         """Compute the distance between two AMP states."""
-        return gfnx.utils.distances.levenstein_distance(
-            lhs_state.tokens, rhs_state.tokens, env.nchar
+        return gfnx.utils.distances.levenshtein_distance(
+            lhs_state.tokens, rhs_state.tokens, eos_id=env.eos_token, pad_id=env.pad_token
         )
 
     metrics_module = MultiMetricsModule({
