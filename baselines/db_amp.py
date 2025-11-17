@@ -24,11 +24,15 @@ import optax
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
-from utils.checkpoint import save_checkpoint
-from utils.logger import Writer
+from typing import NamedTuple
 
 import gfnx
-from gfnx.metrics.new import MultiMetricsModule, MultiMetricsState, TopKMetricsModule
+from gfnx.metrics.new import (MultiMetricsModule, 
+                              MultiMetricsState, 
+                              TopKMetricsModule)
+
+from utils.logger import Writer
+from utils.checkpoint import save_checkpoint
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -110,8 +114,6 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: MultiMetricsModule
     metrics_state: MultiMetricsState
-    exploration_schedule: optax.Schedule
-    eval_info: dict
 
 
 @eqx.filter_jit
@@ -124,22 +126,22 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
     policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
-    cur_eps = train_state.exploration_schedule(idx)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
-        batch_size = env_obs.shape[0]
-        rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
-        policy_outputs = jax.vmap(
-            lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
-        )(env_obs, jax.random.split(rng_key, batch_size))
-        # With probability cur_eps, return zero logits and the same policy outputs
-        do_explore = jax.random.bernoulli(explore_key, cur_eps, shape=(batch_size,))
-        forward_logits = jnp.where(
-            do_explore[..., jnp.newaxis], 0, policy_outputs["forward_logits"]
-        )
-        return forward_logits, policy_outputs
+        policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
+        fwd_logits = policy_outputs["forward_logits"]
+
+        rng_key, exploration_key = jax.random.split(rng_key)
+        batch_size, _ = fwd_logits.shape
+        exploration_mask = jax.random.bernoulli(exploration_key,
+                                                train_state.config.agent.eps_exploration,
+                                                (batch_size,))
+        fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
+        policy_outputs = policy_outputs.copy()
+        policy_outputs["forward_logits"] = fwd_logits
+        return policy_outputs["forward_logits"], policy_outputs
 
     # Generating the trajectory and splitting it into transitions
     traj_data, log_info = gfnx.utils.forward_rollout(
@@ -178,6 +180,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         log_flow = policy_outputs["log_flow"]
 
         # Compute the stats for the next state
+        #next_policy_outputs = jax.vmap(model, in_axes=(0,))(transitions.next_obs)
         next_policy_outputs = jax.vmap(
             lambda x, key: model(x, enable_dropout=True, key=key), in_axes=(0, 0)
         )(transitions.next_obs, jax.random.split(rng_key, batch_size))
@@ -210,7 +213,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         flow_loss = ((loss * not_done).sum() / (jnp.logical_and(transition, not_done)).sum())
 
         loss = leaf_loss * 25 + flow_loss
-        return loss 
+        return loss
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads
@@ -225,7 +228,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         train_state.metrics_state,
         rng_key=jax.random.key(0),  # not used, but required by the API
         args=train_state.metrics_module.UpdateArgs(
-            metrics_args={"topk": TopKMetricsModule.UpdateArgs()}
+            metrics_args={
+                "topk": TopKMetricsModule.UpdateArgs()
+                }
         ),
     )
 
@@ -250,20 +255,17 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             ),
         },
     )
-    eval_info = jax.lax.cond(
-        is_eval_step,
-        lambda metrics_state: train_state.metrics_module.get(metrics_state),
-        lambda metrics_state: train_state.eval_info,  # Do nothing if not eval step
-        metrics_state,
-    )
 
     # Perform the logging via JAX debug callback
-    def logging_callback(idx: int, train_info: dict, eval_info: dict, cfg):
+    def logging_callback(
+        idx: int, train_info: dict, metrics_state: gfnx.metrics.new.MultiMetricsState, cfg
+    ):
         train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
 
         if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
             log.info(f"Step {idx}")
             log.info(train_info)
+            eval_info = train_state.metrics_module.get(metrics_state)
             eval_info = {f"eval/{key}": float(value) for key, value in eval_info.items()}
             log.info(eval_info)
             if cfg.logging.use_writer:
@@ -290,7 +292,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_log_reward": log_info["log_gfn_reward"].mean(),
             "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
-        eval_info,
+        metrics_state,
         train_state.config,
         ordered=True,
     )
@@ -301,7 +303,6 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         model=model,
         opt_state=opt_state,
         metrics_state=metrics_state,
-        eval_info=eval_info,
     )
 
 
@@ -327,7 +328,6 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the environment and its inner parameters
     env = gfnx.AMPEnvironment(reward_module)
     env_params = env.init(env_init_key)
-
     rng_key, net_init_key = jax.random.split(rng_key)
     # Initialize the network
     model = TransformerPolicy(
@@ -337,27 +337,18 @@ def run_experiment(cfg: OmegaConf) -> None:
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,
-            "max_length": env.max_length + 1,  # +1 for BOS token
+            "max_length": env.max_length,
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,
     )
-    # Initialize the exploration schedule
-    exploration_schedule = optax.linear_schedule(
-        init_value=cfg.agent.start_eps,
-        end_value=cfg.agent.end_eps,
-        transition_steps=cfg.agent.exploration_steps,
-    )
     # Initialize the optimizer
-    optimizer = optax.adamw(
-        learning_rate=cfg.agent.learning_rate,
-        weight_decay=cfg.agent.weight_decay
-    )
+    optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
 
-    def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
+    def fwd_policy_fn_metrics(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -371,19 +362,19 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     metrics_module = MultiMetricsModule({
         "topk": TopKMetricsModule(
-            fwd_policy_fn=fwd_policy_fn,
+            fwd_policy_fn=fwd_policy_fn_metrics,
             env=env,
             num_traj=cfg.metrics.num_traj,
             batch_size=cfg.metrics.batch_size,  # Ignored for a moment
             top_k=[10, 50, 100],
             distance_fn=amp_distance_fn,
-        )
+        ),
     })
     metrics_state = metrics_module.init(
         eval_init_key,
-        metrics_module.InitArgs(metrics_args={"topk": TopKMetricsModule.InitArgs()}),
+        metrics_module.InitArgs(metrics_args={
+            "topk": TopKMetricsModule.InitArgs()}),
     )
-    eval_info = metrics_module.get(metrics_state)
 
     train_state = TrainState(
         rng_key=rng_key,
@@ -395,8 +386,6 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
-        exploration_schedule=exploration_schedule,
-        eval_info=eval_info,
     )
     # Split train state into parameters and static parts to make jit work.
     train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
@@ -412,12 +401,8 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     if cfg.logging.use_writer:
         log.info("Initialize writer")
-        log_dir = (
-            cfg.logging.log_dir
-            if cfg.logging.log_dir
-            else os.path.join(
-                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
-            )
+        log_dir = os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"db_amp_comp_run_{os.getpid()}/"
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
@@ -441,13 +426,9 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Save the final model
     train_state = eqx.combine(train_state_params, train_state_static)
-    dir = (
-        cfg.logging.checkpoint_dir
-        if cfg.logging.checkpoint_dir
-        else os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
-            f"checkpoints_{os.getpid()}/",
-        )
+    dir = os.path.join(
+        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+        f"checkpoints_{os.getpid()}/",
     )
     save_checkpoint(os.path.join(dir, "train_state"), train_state)
     save_checkpoint(os.path.join(dir, "model"), train_state.model)

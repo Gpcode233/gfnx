@@ -5,6 +5,8 @@ from .sequence import (
     EnvState,  # noqa: F401
     AutoregressiveSequenceEnvironment,
 )
+import jax.numpy as jnp
+import chex
 
 
 class AMPEnvironment(AutoregressiveSequenceEnvironment):
@@ -25,3 +27,31 @@ class AMPEnvironment(AutoregressiveSequenceEnvironment):
     def name(self) -> str:
         """Environment name."""
         return "AMP-v0"
+
+    def get_obs(self, state: EnvState, env_params: EnvParams) -> chex.Array:
+        """Applies observation function to state."""
+        # Add BOS token to the beginning of the sentence
+        num_envs = state.time.shape[0]
+        to_append = jnp.full(
+                    shape=(num_envs, 1),
+                    fill_value=self.pad_token,
+                    dtype=state.tokens.dtype,
+                )
+
+        # Use PAD if the last token is already PAD or EOS, otherwise use EOS
+        last_token = state.tokens[:, -1]
+        to_append = jnp.where(
+            jnp.logical_or(last_token == self.pad_token, last_token == self.eos_token),
+            self.pad_token,
+            self.eos_token
+        )
+        to_append = to_append[:, None]  # Add dimension to match concatenation
+
+        obs = jnp.concat(
+            [
+                state.tokens,
+                to_append,
+            ],
+            axis=-1,
+        )
+        return obs
