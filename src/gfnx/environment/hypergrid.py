@@ -70,32 +70,25 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
     def max_steps_in_episode(self) -> int:
         return self.dim * self.side
 
-    @property
-    def is_topologically_sortable(self) -> bool:
-        return True
-
-    def get_topological_sort(self) -> EnvState:
-        """Returns the topological sort of states."""
+    def get_all_states(self, env_params: EnvParams) -> EnvState:
+        """Returns all states in the environment in some order."""
 
         all_states_coords = jnp.array(list(product(range(self.side), repeat=self.dim)))
-        sorted_indices = jnp.argsort(all_states_coords.sum(axis=1))
-        sorted_states_coords = all_states_coords[sorted_indices]
-
-        num_states = sorted_states_coords.shape[0]
-        time = sorted_states_coords.sum(axis=1)
+        num_states = all_states_coords.shape[0]
+        time = all_states_coords.sum(axis=1)
         is_initial = time == 0
         is_terminal = jnp.zeros(num_states, dtype=jnp.bool)
         is_pad = jnp.zeros(num_states, dtype=jnp.bool)
 
         return EnvState(
-            state=sorted_states_coords,
+            state=all_states_coords,
             time=time,
             is_terminal=is_terminal,
             is_initial=is_initial,
             is_pad=is_pad,
         )
 
-    def state_to_index(self, state: EnvState) -> chex.Array:
+    def state_to_index(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         # Safe flattening under JIT; avoid raise-mode bounds checks
         return jnp.ravel_multi_index(
             state.state.astype(jnp.int32),
@@ -182,12 +175,9 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
     def get_obs(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         """Applies observation function to state."""
 
-        # One-hot encoding
         def single_get_obs(state: EnvState) -> chex.Array:
-            # TODO: improve it with jax one-hot-encoding
-            state_ohe = jnp.zeros((self.dim * self.side), dtype=jnp.float32)
-            indices = jnp.arange(self.dim) * self.side + state.state
-            return state_ohe.at[indices].set(1.0)
+            state_ohe = jax.nn.one_hot(state.state, self.side, dtype=jnp.float32)
+            return jnp.reshape(state_ohe, (self.dim * self.side,))
 
         return jax.vmap(single_get_obs)(state)
 

@@ -24,12 +24,11 @@ import optax
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
+from utils.checkpoint import save_checkpoint
+from utils.logger import Writer
 
 import gfnx
 from gfnx.metrics.new import MultiMetricsModule, MultiMetricsState, TopKMetricsModule
-
-from utils.logger import Writer
-from utils.checkpoint import save_checkpoint
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -127,10 +126,17 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
-        del rng_key
+        rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
-        policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
-        return policy_outputs["forward_logits"], policy_outputs
+        policy_outputs = jax.vmap(
+            lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
+        )(env_obs, jax.random.split(rng_key, env_obs.shape[0]))
+        # With probability epsilon, return zero logits and the same policy outputs
+        epsilon = train_state.config.agent.eps_exploration
+        do_explore = jax.random.bernoulli(explore_key, epsilon)
+        zero_logits = jnp.zeros_like(policy_outputs["forward_logits"])
+        forward_logits = jnp.where(do_explore, zero_logits, policy_outputs["forward_logits"])
+        return forward_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
     traj_data, log_info = gfnx.utils.forward_rollout(
@@ -235,9 +241,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
 
     # Perform the logging via JAX debug callback
-    def logging_callback(
-        idx: int, train_info: dict, eval_info: dict, cfg
-    ):
+    def logging_callback(idx: int, train_info: dict, eval_info: dict, cfg):
         train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
 
         if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
@@ -316,7 +320,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,
-            "max_length": env.max_length,
+            "max_length": env.max_length + 1,  # +1 for BOS token
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,
@@ -381,8 +385,12 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     if cfg.logging.use_writer:
         log.info("Initialize writer")
-        log_dir = cfg.logging.log_dir if cfg.logging.log_dir else os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+        log_dir = (
+            cfg.logging.log_dir
+            if cfg.logging.log_dir
+            else os.path.join(
+                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+            )
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
@@ -406,9 +414,13 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Save the final model
     train_state = eqx.combine(train_state_params, train_state_static)
-    dir = cfg.logging.checkpoint_dir if cfg.logging.checkpoint_dir else os.path.join(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
-        f"checkpoints_{os.getpid()}/",
+    dir = (
+        cfg.logging.checkpoint_dir
+        if cfg.logging.checkpoint_dir
+        else os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+            f"checkpoints_{os.getpid()}/",
+        )
     )
     save_checkpoint(os.path.join(dir, "train_state"), train_state)
     save_checkpoint(os.path.join(dir, "model"), train_state.model)

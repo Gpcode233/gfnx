@@ -1,7 +1,5 @@
 """Abstract base class for all gfnx Environments"""
 
-# TODO: add credits to gymnax
-
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, Tuple, TypeVar
 
@@ -256,30 +254,28 @@ class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
         raise NotImplementedError
 
     def sample_action(
-        self, rng_key: chex.PRNGKey, policy_probs: chex.Array
+        self, rng_key: chex.PRNGKey, policy_logprobs: chex.Array
     ) -> Int[Array, " batch_size"]:
         """
         Helping function for sampling actions from policy.
         """
-        batch_size = policy_probs.shape[0]
-        return jax.vmap(
-            lambda key, p: jax.random.choice(key, self.action_space.n, p=p),
-            in_axes=(0, 0),
-        )(jax.random.split(rng_key, batch_size), policy_probs)
+        batch_size = policy_logprobs.shape[0]
+        action = jax.random.categorical(rng_key, policy_logprobs, axis=-1)
+        chex.assert_shape(action, (batch_size,))
+        return action
 
     def sample_backward_action(
         self,
         rng_key: chex.PRNGKey,
-        policy_probs: chex.Array,
+        policy_logprobs: chex.Array,
     ) -> Int[Array, " batch_size"]:
         """
         Helping function for sampling actions from policy.
         """
-        batch_size = policy_probs.shape[0]
-        return jax.vmap(
-            lambda key, p: jax.random.choice(key, self.backward_action_space.n, p=p),
-            in_axes=(0, 0),
-        )(jax.random.split(rng_key, batch_size), policy_probs)
+        batch_size = policy_logprobs.shape[0]
+        action = jax.random.categorical(rng_key, policy_logprobs, axis=-1)
+        chex.assert_shape(action, (batch_size,))
+        return action
 
     @property
     @abstractmethod
@@ -309,17 +305,6 @@ class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
     @abstractmethod
     def state_space(self):
         """State space of the environment."""
-        raise NotImplementedError
-
-    @property
-    def is_topologically_sortable(self) -> bool:
-        """Whether this environment supports returning topological sort of states."""
-        return False
-
-    def get_topological_sort(self) -> chex.Array:
-        """Returns the topological sort of states if this functionality is supported."""
-        if not self.is_topologically_sortable:
-            raise ValueError(f"Environment {self.name} does not support topological sort")
         raise NotImplementedError
 
     @property
@@ -353,6 +338,21 @@ class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
         """
         if not self.is_enumerable:
             raise ValueError(f"Environment {self.name} is not enumerable")
+        raise NotImplementedError
+
+    def get_all_states(self, env_params: TEnvParams) -> chex.Array:
+        """Returns a list of all states if this functionality is supported."""
+        if not self.is_enumerable:
+            raise ValueError(f"Environment {self.name} does not support getting all states")
+        raise NotImplementedError
+
+    def state_to_index(self, state: TEnvState, env_params: TEnvParams) -> chex.Array:
+        """
+        Converts a state to its corresponding index returned by `get_all_states` function
+        if this functionality is supported.
+        """
+        if not self.is_enumerable:
+            raise ValueError(f"Environment {self.name} does not support getting all states")
         raise NotImplementedError
 
     @property

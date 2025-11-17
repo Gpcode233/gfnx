@@ -24,6 +24,8 @@ import optax
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
+from utils.checkpoint import save_checkpoint
+from utils.logger import Writer
 
 import gfnx
 from gfnx.metrics.new import (
@@ -32,9 +34,6 @@ from gfnx.metrics.new import (
     MultiMetricsState,
     TestCorrelationMetricsModule,
 )
-
-from utils.logger import Writer
-from utils.checkpoint import save_checkpoint
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -132,10 +131,17 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
-        del rng_key
+        rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
-        policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
-        return policy_outputs["forward_logits"], policy_outputs
+        policy_outputs = jax.vmap(
+            lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
+        )(env_obs, jax.random.split(rng_key, env_obs.shape[0]))
+        # With probability epsilon, return zero logits and the same policy outputs
+        epsilon = train_state.config.agent.eps_exploration
+        do_explore = jax.random.bernoulli(explore_key, epsilon)
+        zero_logits = jnp.zeros_like(policy_outputs["forward_logits"])
+        forward_logits = jnp.where(do_explore, zero_logits, policy_outputs["forward_logits"])
+        return forward_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
     traj_data, log_info = gfnx.utils.forward_rollout(
@@ -157,7 +163,10 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 2. Compute the loss
     def loss_fn(model: TransformerPolicy) -> chex.Array:
         # Call the network to get the logits
-        policy_outputs = jax.vmap(model, in_axes=(0,))(transitions.obs)
+        batch_size = transitions.obs.shape[0]
+        policy_outputs = jax.vmap(
+            lambda x, key: model(x, enable_dropout=True, key=key), in_axes=(0, 0)
+        )(transitions.obs, jax.random.split(rng_key, batch_size))
         # Compute the forward log-probs
         fwd_logits = policy_outputs["forward_logits"]
         invalid_mask = env.get_invalid_mask(transitions.state, env_params)
@@ -245,9 +254,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
 
     # Perform the logging via JAX debug callback
-    def logging_callback(
-        idx: int, train_info: dict, eval_info: dict, cfg
-    ):
+    def logging_callback(idx: int, train_info: dict, eval_info: dict, cfg):
         train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
 
         if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
@@ -317,9 +324,9 @@ def run_experiment(cfg: OmegaConf) -> None:
         n_bwd_actions=env.backward_action_space.n,
         train_backward_policy=cfg.agent.train_backward,
         encoder_params={
-            "pad_id": env.pad_token,
+            "pad_id": -1,  # We don't mask padding in bitseq env
             "vocab_size": env.ntoken,
-            "max_length": env.max_length,
+            "max_length": env.max_length + 1,  # +1 for a BOS token
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,
@@ -331,6 +338,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
 
     def bwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
+        # We are using a deterministic backward policy for evaluation
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -359,11 +367,15 @@ def run_experiment(cfg: OmegaConf) -> None:
     )
     vector_tokenize = jax.vmap(lambda x: gfnx.utils.bitseq.tokenize(x, env.k))
     test_set_tokens = vector_tokenize(binary_test_set)
-    test_set_states = gfnx.BitseqEnvState.from_tokens(test_set_tokens)
+    test_set_states = gfnx.BitseqEnvState.from_tokens(test_set_tokens).replace(
+        time=jnp.ones(test_set_tokens.shape[0], dtype=jnp.int32) * env.max_length
+    )
     # Initialize the metrics
     mode_set = env_params.reward_params["mode_set"]
     mode_set_tokens = vector_tokenize(mode_set)
-    modes_states = gfnx.BitseqEnvState.from_tokens(mode_set_tokens)
+    modes_states = gfnx.BitseqEnvState.from_tokens(mode_set_tokens).replace(
+        time=jnp.ones(mode_set_tokens.shape[0], dtype=jnp.int32) * env.max_length
+    )
 
     # Here we need to pass the initial parameters for all  metrics
     metrics_state = metrics_module.init(
@@ -405,8 +417,12 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     if cfg.logging.use_writer:
         log.info("Initialize writer")
-        log_dir = cfg.logging.log_dir if cfg.logging.log_dir else os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+        log_dir = (
+            cfg.logging.log_dir
+            if cfg.logging.log_dir
+            else os.path.join(
+                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+            )
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
@@ -430,9 +446,13 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Save the final model
     train_state = eqx.combine(train_state_params, train_state_static)
-    dir = cfg.logging.checkpoint_dir if cfg.logging.checkpoint_dir else os.path.join(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
-        f"checkpoints_{os.getpid()}/",
+    dir = (
+        cfg.logging.checkpoint_dir
+        if cfg.logging.checkpoint_dir
+        else os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+            f"checkpoints_{os.getpid()}/",
+        )
     )
     save_checkpoint(os.path.join(dir, "train_state"), train_state)
     save_checkpoint(os.path.join(dir, "model"), train_state.model)

@@ -143,25 +143,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         env_obs: gfnx.TObs,
         current_policy_params,
     ) -> chex.Array:
-        # Recombine the learnable parameters with the static parts
-        # of the policy model.
         current_model = eqx.combine(current_policy_params, policy_static)
 
-        # env_obs is expected to be batched (num_envs, seq_len).
-        # Create per-sample dropout keys for the batch.
         num_samples = env_obs.shape[0]
         dropout_keys = jax.random.split(fwd_rng_key, num_samples)
-
-        # Apply the policy model to each observation in the batch using vmap.
-        # Dropout is enabled by enable_dropout=True and a unique key per sample
         policy_outputs = jax.vmap(
-            lambda model, obs, dkey: model(obs, enable_dropout=True, key=dkey),
-            in_axes=(
-                None,
-                0,
-                0,
-            ),  # Model is fixed; map over obs and dropout_keys.
-        )(current_model, env_obs, dropout_keys)
+            lambda obs, dkey: current_model(obs, enable_dropout=True, key=dkey),
+            in_axes=(0,0),
+        )(env_obs, dropout_keys)
 
         return policy_outputs["forward_logits"], policy_outputs
 
@@ -192,14 +181,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
         # Reconstruct the callable model using its learnable parameters
         model_to_call = eqx.combine(model_learnable_params, static_model_parts)
-
-        # For TransformerPolicy, obs is obs_ids.
-        # Dropout key can be omitted or a dummy one provided if not training.
-        # Assuming no dropout needed for loss computation based
-        # on existing structure.
-        policy_outputs_traj = jax.vmap(jax.vmap(model_to_call))(
-            current_traj_data.obs  # obs is obs_ids
-        )
+        dropout_keys = jax.random.split(rng_key, current_traj_data.obs.shape[:2])
+        # Get policy outputs for the entire trajectory
+        policy_outputs_traj = jax.vmap(
+            jax.vmap(
+                lambda obs, key: model_to_call(obs, enable_dropout=True, key=key),
+            ),
+        )(current_traj_data.obs, dropout_keys)
 
         fwd_logits_traj = policy_outputs_traj["forward_logits"]
 
@@ -438,7 +426,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,
-            "max_length": env.max_length,
+            "max_length": env.max_length + 1, # +1 for BOS token
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,

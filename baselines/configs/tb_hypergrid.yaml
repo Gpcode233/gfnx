@@ -25,6 +25,7 @@ environment:
 
 metrics:
   n_rounds : 10
+  batch_size: 1024
 
 logging:
   track_each: 1 # in terms of total training steps, not divided by num_envs

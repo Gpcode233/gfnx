@@ -127,10 +127,17 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
-        del rng_key
+        rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
-        policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
-        return policy_outputs["forward_logits"], policy_outputs
+        policy_outputs = jax.vmap(
+            lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
+        )(env_obs, jax.random.split(rng_key, env_obs.shape[0]))
+        # With probability epsilon, return zero logits and the same policy outputs
+        epsilon = train_state.config.agent.eps_exploration
+        do_explore = jax.random.bernoulli(explore_key, epsilon)
+        zero_logits = jnp.zeros_like(policy_outputs["forward_logits"])
+        forward_logits = jnp.where(do_explore, zero_logits, policy_outputs["forward_logits"])
+        return forward_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
     traj_data, log_info = gfnx.utils.forward_rollout(
@@ -307,7 +314,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,
-            "max_length": env.max_length,
+            "max_length": env.max_length + 1,  # +1 for BOS token
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,

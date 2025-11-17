@@ -307,7 +307,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                         env_params=env_params
                     ),
                     "exact_dist": ExactDistributionMetricsModule.ProcessArgs(
-                        policy_params=policy_params, env_params=env_params
+                        policy_params=policy_params, env_params=train_state.env_params
                     ),
                     "elbo": ELBOMetricsModule.ProcessArgs(
                         policy_params=policy_params, env_params=train_state.env_params
@@ -479,7 +479,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             metrics=["tv", "kl", "2d_marginal_distribution"],
             env=env,
             fwd_policy_fn=fwd_policy_fn,
-            batch_size=cfg.num_envs,
+            batch_size=cfg.metrics.batch_size,
         ),
         "elbo": ELBOMetricsModule(
             env=env,
@@ -571,7 +571,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         body_fun=train_step_wrapper,  # body_fun now expects and returns params
         init_val=loop_init_val,  # Pass only the JAX array parts
     )
-    jax.block_until_ready(final_train_state_params)
+    final_train_state_params = jax.block_until_ready(final_train_state_params)
 
     # Save the final model
     final_train_state = eqx.combine(final_train_state_params, train_state_static)

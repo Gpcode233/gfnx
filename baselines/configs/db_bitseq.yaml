@@ -2,12 +2,12 @@ seed: 111
 env_init_seed: 1
 eval_init_seed: 2
 
-num_train_steps: 20000
+num_train_steps: 50000
 num_envs: 16
 
 agent:
   learning_rate: 1e-3
-  eps_exploration: 0.00
+  eps_exploration: 1e-3
   train_backward: true
 
 network:
@@ -19,23 +19,23 @@ network:
   hidden_size: 64
   intermediate_size: 64
 
-  dropout_rate: 0.0
+  dropout_rate: 0.1
   attention_dropout_rate: 0.0
 
 environment:
-  k: 2
-  n: 8
-  num_modes: 2
+  k: 4
+  n: 120
+  num_modes: 60
   reward_exponent: 2.0
 
 metrics:
   n_rounds : 10
   batch_size : 16
-  mode_threshold : 10
+  mode_threshold : 30
 
 logging:
   track_each: 1 # in terms of total training steps, not divided by num_envs
-  eval_each: 100 # in terms of total training steps, not divided by num_envs
+  eval_each: 2000 # in terms of total training steps, not divided by num_envs
   tqdm_print_rate: 20
   use_writer: false
   log_dir: null # If null, dir will be automatically created

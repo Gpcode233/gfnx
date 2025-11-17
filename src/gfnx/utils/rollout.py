@@ -14,7 +14,6 @@ from ..base import (
     TEnvState,
     TObs,
 )
-from .masking import mask_logits
 
 TPolicyFn = TypeVar("TPolicyFn")
 TPolicyParams = TypeVar("TPolicyParams")
@@ -217,17 +216,20 @@ def generic_rollout(
         # Call the policy function
         logits, policy_info = policy_fn(policy_rng_key, env_obs, policy_params)
         # Very important part: masking invalid actions
-        masked_logits = mask_logits(logits, invalid_mask)
-        policy_probs = jax.nn.softmax(masked_logits, axis=-1)
+        policy_probs = jax.nn.softmax(logits, where=jnp.logical_not(invalid_mask), axis=-1)
+        policy_log_probs = jax.nn.log_softmax(logits, where=jnp.logical_not(invalid_mask), axis=-1)
         # Sampling the required action
-        action = sample_action_fn(sample_rng_key, policy_probs)
+        action = sample_action_fn(sample_rng_key, policy_log_probs)
         next_obs, next_env_state, log_gfn_reward, done, step_info = step_fn(
             env_state, action, env_params
         )
-        log_probs = jax.nn.log_softmax(masked_logits)
-        sampled_log_probs = jnp.take_along_axis(log_probs, action[..., None], axis=-1).squeeze(-1)
+        sampled_log_probs = jnp.take_along_axis(
+            policy_log_probs, action[..., None], axis=-1
+        ).squeeze(-1)
         info = {
-            "entropy": -jnp.sum(policy_probs * log_probs, axis=-1),
+            "entropy": -jnp.sum(
+                jnp.where(invalid_mask, 0.0, policy_probs * policy_log_probs), axis=-1
+            ),
             "sampled_log_prob": sampled_log_probs,
             **step_info,
             **policy_info,
@@ -383,15 +385,17 @@ def _compute_trajectory_log_ratio(
         fwd_action_mask = env.get_invalid_mask(prev_states, env_params)
 
     # Compute forward log probabilities
-    forward_logits = mask_logits(forward_logits, fwd_action_mask)
-    forward_logprobs = jax.nn.log_softmax(forward_logits)
+    forward_logprobs = jax.nn.log_softmax(
+        forward_logits, where=jnp.logical_not(fwd_action_mask), axis=-1
+    )
     sampled_forward_logprobs = jnp.take_along_axis(
         forward_logprobs, fwd_actions[..., None], axis=-1
     ).squeeze(-1)
 
     # Compute backward log probabilities
-    backward_logits = mask_logits(backward_logits, bwd_action_mask)
-    backward_logprobs = jax.nn.log_softmax(backward_logits)
+    backward_logprobs = jax.nn.log_softmax(
+        backward_logits, where=jnp.logical_not(bwd_action_mask), axis=-1
+    )
     sampled_backward_logprobs = jnp.take_along_axis(
         backward_logprobs, bwd_actions[..., None], axis=-1
     ).squeeze(-1)
