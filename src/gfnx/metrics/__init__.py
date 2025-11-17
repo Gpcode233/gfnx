@@ -14,6 +14,7 @@ from .phylogenetic_tree import (
     PhyloTreeCorrelationState,
 )
 from .tfbind import TFBindMetricModule, TFBindMetricState
+from .qm9_small import QM9SmallMetricModule, QM9SmallMetricState
 
 __all__ = [
     "AMPMetricModule",
@@ -32,6 +33,8 @@ __all__ = [
     "SmallBitseqMetricModule",
     "TFBindMetricState",
     "TFBindMetricModule",
+    "QM9SmallMetricState",
+    "QM9SmallMetricModule",
     "DAGCorrelationMetric",
     "DAGCorrelationState",
 ]

@@ -22,6 +22,10 @@ from .proteins import (
     PROTEINS_FULL_ALPHABET,
     SPECIAL_TOKENS,
 )
+from .molecules import (
+    QM9_SMALL_BLOCKS,
+    QM9_SMALL_FULL_ALPHABET,
+)
 from .rollout import (
     TrajectoryData,
     TransitionData,

@@ -38,7 +38,10 @@ from .environment import (
     PhyloTreeEnvState,
     TFBind8Environment,
     TFBind8EnvParams,
-    TFBind8EnvState
+    TFBind8EnvState,
+    QM9SmallEnvironment,
+    QM9SmallEnvParams,
+    QM9SmallEnvState
 )
 from .reward import (
     BitseqRewardModule,
@@ -50,6 +53,7 @@ from .reward import (
     HardHypergridRewardModule,
     PhyloTreeRewardModule,
     TFBind8RewardModule,
+    QM9SmallRewardModule,
 )
 
 __all__ = [
@@ -84,6 +88,10 @@ __all__ = [
     "TFBind8EnvParams",
     "TFBind8EnvState",
     "TFBind8RewardModule",
+    "QM9SmallEnvironment",
+    "QM9SmallEnvParams",
+    "QM9SmallEnvState",
+    "QM9SmallRewardModule",
     "TBackwardAction",
     "TDone",
     "TEnvParams",

@@ -11,6 +11,7 @@ from .hypergrid import (
 )
 from .phylogenetic_tree import PhyloTreeRewardModule
 from .tfbind import TFBind8RewardModule
+from .qm9_small import QM9SmallRewardModule
 
 __all__ = [
     "BitseqRewardModule",
@@ -21,6 +22,7 @@ __all__ = [
     "HardHypergridRewardModule",
     "PhyloTreeRewardModule",
     "TFBind8RewardModule",
+    "QM9SmallRewardModule",
     "DAGRewardModule",
     "ZeroScore",
     "LinearGaussianScore",
