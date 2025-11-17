@@ -7,6 +7,10 @@ from .bitseq import (
 )
 from .gfp import GFPMetricModule, GFPMetricState
 from .hypergrid import HypergridMetricModule, HypergridMetricState
+from .phylogenetic_tree import (
+    PhyloTreeCorrelationMetric,
+    PhyloTreeCorrelationState,
+)
 
 __all__ = [
     "AMPMetricModule",
@@ -19,4 +23,6 @@ __all__ = [
     "GFPMetricState",
     "HypergridMetricState",
     "HypergridMetricModule",
+    "PhyloTreeCorrelationMetric",
+    "PhyloTreeCorrelationState",
 ]
