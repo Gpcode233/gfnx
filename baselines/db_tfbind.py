@@ -33,9 +33,9 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
 
-class TransformerPolicy(eqx.Module):
+class MLPPolicy(eqx.Module):
     """
-    A policy module that uses a simple transformer model to generate
+    A policy module that uses a Multi-Layer Perceptron (MLP) to generate
     forward and backward action logits as well as a flow.
     """
 
@@ -63,8 +63,11 @@ class TransformerPolicy(eqx.Module):
             output_size += n_bwd_actions
 
         encoder_key, pooler_key = jax.random.split(key)
-        #self.encoder = gfnx.networks.Encoder(key=encoder_key, **encoder_params)
-        self.encoder = eqx.nn.MLP(in_size=5 * 8, out_size=encoder_params["hidden_size"], width_size=256, depth=2, key=encoder_key)
+        self.encoder = eqx.nn.MLP(in_size=5 * 8, 
+                                  out_size=encoder_params["hidden_size"], 
+                                  width_size=encoder_params["hidden_size"], 
+                                  depth=encoder_params["depth"], 
+                                  key=encoder_key)
         self.pooler = eqx.nn.Linear(
             in_features=encoder_params["hidden_size"],
             out_features=output_size,
@@ -80,11 +83,6 @@ class TransformerPolicy(eqx.Module):
     ) -> chex.Array:
         obs_ids = jax.nn.one_hot(obs_ids[1:], 5).reshape(-1)
         encoded_obs = self.encoder(obs_ids)
-        # pos_ids = jnp.arange(obs_ids.shape[0])
-        # encoded_obs = self.encoder(
-        #     obs_ids, pos_ids, enable_dropout=enable_dropout, key=key
-        # )["layers_out"][-1]  # [seq_len, hidden_size]
-        #encoded_obs = encoded_obs.mean(axis=0)  # Average pooling
         output = self.pooler(encoded_obs)
         if self.train_backward_policy:
             forward_logits, flow, backward_logits = jnp.split(
@@ -110,7 +108,7 @@ class TrainState(NamedTuple):
     config: OmegaConf
     env: gfnx.TFBind8Environment
     env_params: chex.Array
-    model: TransformerPolicy
+    model: MLPPolicy
     optimizer: optax.GradientTransformation
     opt_state: optax.OptState
     metrics_module: gfnx.metrics.TFBindMetricModule  # dict with metric modules
@@ -157,7 +155,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
 
     # Step 2. Compute the loss
-    def loss_fn(model: TransformerPolicy) -> chex.Array:
+    def loss_fn(model: MLPPolicy) -> chex.Array:
         # Call the network to get the logits
         policy_outputs = jax.vmap(model, in_axes=(0,))(transitions.obs)
         # Compute the forward log-probs
@@ -191,7 +189,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Replace the target with the log_gfn_reward if the episode is done
         target = jnp.where(
             transitions.done,
-            transitions.log_gfn_reward,
+            bwd_logprobs + transitions.log_gfn_reward,
             bwd_logprobs + next_log_flow,
         )
 
@@ -277,10 +275,10 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     rng_key, net_init_key = jax.random.split(rng_key)
     # Initialize the network
-    model = TransformerPolicy(
+    model = MLPPolicy(
         n_fwd_actions=env.action_space.n,
         n_bwd_actions=env.backward_action_space.n,
-        train_backward_policy=False,
+        train_backward_policy=cfg.agent.train_backward,
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,

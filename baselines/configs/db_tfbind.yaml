@@ -6,26 +6,18 @@ num_train_steps: 1000000
 num_envs: 16
 
 agent:
-  learning_rate: 1e-3
+  learning_rate: 3e-4
   eps_exploration: 0.00
   train_backward: false
 
 network:
   # Input size and output size are computed based on the environment
-  num_heads: 8
-  num_layers: 2
-
-  embedding_size: 64
-  hidden_size: 64
-  intermediate_size: 64
-
-  dropout_rate: 0.0
-  attention_dropout_rate: 0.0
-
+  hidden_size: 256
+  depth: 2
 
 logging:
   track_each: 500 # in terms of total training steps, not divited by num_envs
-  metric_buffer_size: 16000000
+  metric_buffer_size: 1000000
   tqdm_print_rate: 20
   use_wandb: False
 
