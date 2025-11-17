@@ -74,18 +74,10 @@ def apply_epsilon_greedy(
         Modified logits with exploration
     """
     random_key, choice_key = jax.random.split(rng_key)
-
-    # Generate random logits
-    random_logits = jax.random.uniform(
-        random_key,
-        shape=logits.shape,
-        minval=-1.0,
-        maxval=1.0,
-    )
-
+    default_logits = jnp.zeros_like(logits)
     # Choose between random and policy logits
     explore = jax.random.uniform(choice_key) < epsilon
-    return jnp.where(explore, random_logits, logits)
+    return jnp.where(explore, default_logits, logits)
 
 
 def apply_epsilon_greedy_vmap(

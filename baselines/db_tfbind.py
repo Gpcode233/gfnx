@@ -132,6 +132,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     cur_eps = train_state.exploration_schedule(idx)
+
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(
         fwd_rng_key: chex.PRNGKey,
@@ -142,22 +143,20 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
         policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
-        
+
         # Get forward logits
         fwd_logits = policy_outputs["forward_logits"]
-        
+
         # Apply epsilon exploration to logits
         if train:
             rng_key, exploration_key = jax.random.split(fwd_rng_key)
             batch_size, _ = fwd_logits.shape
-            exploration_mask = jax.random.bernoulli(
-            exploration_key, cur_eps, (batch_size,)
-        )
+            exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
             fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
         # Update policy outputs with modified logits
         policy_outputs = policy_outputs.copy()
         policy_outputs["forward_logits"] = fwd_logits
-        
+
         return fwd_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -226,10 +225,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
     model = eqx.apply_updates(train_state.model, updates)
     # Peform all the requied logging
-    rewards = env.reward_module.reward(
-        log_info["final_env_state"],
-        env_params=env_params,
-    )
+    rewards = jnp.exp(log_info["log_gfn_reward"])
     metrics_state = train_state.metrics_module.update(
         train_state.metrics_state,
         rng_key=jax.random.key(0),  # not used, but required by the API
@@ -293,6 +289,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_loss": mean_loss,
             "entropy": log_info["entropy"].mean(),
             "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": log_info["log_gfn_reward"].mean(),
+            "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
         metrics_state,
         train_state.config,

@@ -1,8 +1,8 @@
-"""Single-file implementation for Trajectory Balance in hypergrid environment.
+"""Single-file implementation for Sub-Trajectory Balance in hypergrid environment.
 
 Run the script with the following command:
 ```bash
-python baselines/tb_hypergrid.py
+python baselines/subtb_hypergrid.py
 ```
 
 Also see https://jax.readthedocs.io/en/latest/gpu_performance_tips.html for
@@ -28,6 +28,7 @@ from omegaconf import OmegaConf
 
 import gfnx
 import wandb
+from gfnx.metrics.new import ApproxDistributionMetricsModule, ApproxDistributionMetricsState
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -93,9 +94,7 @@ class MLPPolicy(eqx.Module):
             )
         else:
             forward_logits, log_flow = jnp.split(x, [self.n_fwd_actions], axis=-1)
-            backward_logits = jnp.zeros(
-                shape=(self.n_bwd_actions,), dtype=jnp.float32
-            )
+            backward_logits = jnp.zeros(shape=(self.n_bwd_actions,), dtype=jnp.float32)
         return {
             "forward_logits": forward_logits,
             "backward_logits": backward_logits,
@@ -112,8 +111,8 @@ class TrainState(NamedTuple):
     model: MLPPolicy
     optimizer: optax.GradientTransformation
     opt_state: optax.OptState
-    metrics_module: gfnx.metrics.HypergridMetricModule
-    metrics: gfnx.metrics.HypergridMetricState
+    metrics_module: ApproxDistributionMetricsModule
+    metrics_state: ApproxDistributionMetricsState
 
 
 @eqx.filter_jit
@@ -124,9 +123,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     env_params = train_state.env_params
 
     # Get model parameters and static parts
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     # Step 1. Generate a batch of trajectories
     rng_key, sample_traj_key = jax.random.split(rng_key)
@@ -210,8 +207,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log_pb, jnp.expand_dims(bwd_actions_traj, axis=-1), axis=-1
         ).squeeze(-1)
         log_pb_along_traj = jnp.where(pad_mask, 0.0, log_pb_along_traj)
-        log_pb_along_traj = log_pb_along_traj + \
-            jnp.where(pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1])
+        log_pb_along_traj = log_pb_along_traj + jnp.where(
+            pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1]
+        )
 
         # log_flow
         log_flow = jnp.where(current_traj_data.pad, 0.0, log_flow_traj)
@@ -227,7 +225,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                     log_pb_subtraj = log_flow_finish + (log_pb * mask).sum()
                     loss = optax.losses.squared_error(log_pf_subtraj, log_pb_subtraj)
                     return weight * loss, weight
+
                 return jax.lax.cond(pad[j - 1], lambda: (0.0, 0.0), fn)
+
             i, j = jnp.triu_indices(traj_len + 1, k=1)
             weighted_loss, weighted_norm = jax.vmap(
                 process_pair_idx, in_axes=(0, 0, None, None, None, None, None)
@@ -263,66 +263,75 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     new_model = eqx.apply_updates(train_state.model, updates)
 
     # Perform all the required logging
-    metric_state = train_state.metrics_module.update(
-        train_state.metrics, aux_info["final_env_state"], env_params
+    metrics_state = train_state.metrics_module.update(
+        train_state.metrics_state,
+        rng_key=jax.random.key(0),  # This key is not used in the update method
+        args=train_state.metrics_module.UpdateArgs(states=aux_info["final_env_state"]),
     )
-    # Compute the evaluation info if needed
-    eval_info = jax.lax.cond(
-        (idx % train_state.config.logging.track_each == 0)
-        | (idx + 1 == train_state.config.num_train_steps),
-        train_state.metrics_module.get,
-        lambda x: {
-            "tv": -1.0,
-            "kl": -1.0,
-            "empirical_distribution": x.true_dist,
+
+    # Perform evaluation computations if needed
+    is_eval_step = idx % train_state.config.logging.eval_each == 0
+    is_eval_step = is_eval_step | (idx + 1 == train_state.config.num_train_steps)
+
+    metrics_state = jax.lax.cond(
+        is_eval_step,
+        lambda kwargs: train_state.metrics_module.process(**kwargs),
+        lambda kwargs: kwargs["metrics_state"],  # Do nothing if not eval step
+        {
+            "metrics_state": metrics_state,
+            "rng_key": jax.random.key(0),  # This key is not used in the process method
+            "args": train_state.metrics_module.ProcessArgs(env_params=env_params),
         },
-        metric_state,
     )
 
     # Perform the logging via JAX debug callback
     def logging_callback(
         idx: int,
         train_info: dict,
-        eval_info: dict,
-        cfg_from_train_state: OmegaConf,
+        metrics_state: ApproxDistributionMetricsState,
+        cfg,
     ):
-        if (
-            idx % cfg_from_train_state.logging.track_each == 0
-            or idx + 1 == cfg_from_train_state.num_train_steps
-        ):
+        train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
+        if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
             log.info(f"Step {idx}")
-            log.info({key: float(value) for key, value in train_info.items()})
+            log.info(train_info)
+            # Get the evaluation metrics
+            eval_info = train_state.metrics_module.get(metrics_state)
+            eval_info = {f"eval/{key}": value for key, value in eval_info.items()}
+
             log.info({
                 key: float(value)
                 for key, value in eval_info.items()
-                if key != "eval/empirical_distribution"
+                if key not in ["eval/2d_marginal_distribution"]
             })
-            if cfg_from_train_state.logging.use_wandb:
-                empirical_dist = eval_info["eval/empirical_distribution"]
-                ndim = len(empirical_dist.shape)
-                index_tuple = (slice(None), slice(None), *([0] * (ndim - 2)))
-                # Take a slice of the empirical distribution to visualize it
-                empirical_dist = empirical_dist[index_tuple]
-                empirical_dist = (empirical_dist - empirical_dist.min()) / (
-                    empirical_dist.max() - empirical_dist.min()
+            if cfg.logging.use_wandb:
+                marginal_dist = eval_info["eval/2d_marginal_distribution"]
+                marginal_dist = (marginal_dist - marginal_dist.min()) / (
+                    marginal_dist.max() - marginal_dist.min()
                 )
-                eval_info["eval/empirical_distribution"] = wandb.Image(
-                    np.array(255.0 * empirical_dist, dtype=np.int32)
+                eval_info["eval/2d_marginal_distribution"] = wandb.Image(
+                    np.array(
+                        255.0 * marginal_dist,
+                        dtype=np.int32,
+                    )
                 )
                 wandb.log(eval_info, commit=False)
 
-        if cfg_from_train_state.logging.use_wandb:
+        if cfg.logging.use_wandb and idx % cfg.logging.track_each == 0:
             wandb.log(train_info)
 
     jax.debug.callback(
         logging_callback,
         idx,
         {
-            "train/mean_loss": mean_loss,
-            "train/entropy": aux_info["entropy"].mean(),
-            "train/grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_loss": mean_loss,
+            "entropy": aux_info["entropy"].mean(),
+            "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_reward": jnp.exp(aux_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": aux_info["log_gfn_reward"].mean(),
+            "rl_reward": aux_info["log_gfn_reward"].mean() + aux_info["entropy"].mean(),
         },
-        {f"eval/{key}": value for key, value in eval_info.items()},
+        metrics_state,
         train_state.config,
         ordered=True,
     )
@@ -332,13 +341,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         rng_key=rng_key,
         model=new_model,
         opt_state=new_opt_state,
-        metrics=metric_state,
+        metrics_state=metrics_state,
     )
 
 
-@hydra.main(
-    config_path="configs/", config_name="subtb_hypergrid", version_base=None
-)
+@hydra.main(config_path="configs/", config_name="subtb_hypergrid", version_base=None)
 def run_experiment(cfg: OmegaConf) -> None:
     # Log the configuration
     log.info(OmegaConf.to_yaml(cfg))
@@ -374,10 +381,16 @@ def run_experiment(cfg: OmegaConf) -> None:
     optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
     opt_state = optimizer.init(model_params_init)
 
-    metrics_module = gfnx.metrics.HypergridMetricModule(
-        env, buffer_max_length=cfg.logging.metric_buffer_size
+    metrics_module = ApproxDistributionMetricsModule(
+        metrics=["tv", "kl", "2d_marginal_distribution"],
+        env=env,
+        buffer_size=cfg.logging.metric_buffer_size,
     )
-    metrics = metrics_module.init(eval_init_key, env_params)
+    # Initialize the metrics state
+    eval_init_key, new_eval_init_key = jax.random.split(eval_init_key)
+    metrics_state = metrics_module.init(
+        new_eval_init_key, metrics_module.InitArgs(env_params=env_params)
+    )
 
     train_state = TrainState(
         rng_key=rng_key,
@@ -388,31 +401,21 @@ def run_experiment(cfg: OmegaConf) -> None:
         optimizer=optimizer,
         opt_state=opt_state,
         metrics_module=metrics_module,
-        metrics=metrics,
+        metrics_state=metrics_state,
     )
 
     # Partition the initial TrainState into dynamic (jittable) and static parts
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
-    @functools.partial(
-        jax.jit, donate_argnums=(1,)
-    )  # train_state_params is arg 1 (0-indexed)
+    @functools.partial(jax.jit, donate_argnums=(1,))  # train_state_params is arg 1 (0-indexed)
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging["tqdm_print_rate"])
-    def train_step_wrapper(
-        idx: int, current_train_state_params
-    ) -> TrainState:  # Input is params
+    def train_step_wrapper(idx: int, current_train_state_params) -> TrainState:  # Input is params
         # Recombine static and dynamic parts to get the full TrainState
-        current_train_state = eqx.combine(
-            current_train_state_params, train_state_static
-        )
+        current_train_state = eqx.combine(current_train_state_params, train_state_static)
         # Call the original JITted train_step
         updated_train_state = train_step(idx, current_train_state)
         # Partition again before returning for the next iteration of the loop
-        new_train_state_params, _ = eqx.partition(
-            updated_train_state, eqx.is_array
-        )
+        new_train_state_params, _ = eqx.partition(updated_train_state, eqx.is_array)
         return new_train_state_params
 
     # Initial train_state_params for the loop
@@ -425,9 +428,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=["TB", env.name.upper()],  # Updated to TB
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax lax.fori_loop
@@ -440,9 +441,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     jax.block_until_ready(final_train_state_params)
 
     # Reconstruct the final TrainState from the dynamic and static parts
-    final_train_state = eqx.combine(
-        final_train_state_params, train_state_static
-    )
+    final_train_state = eqx.combine(final_train_state_params, train_state_static)
 
     # Save the final model
     # We need to save model parameters.

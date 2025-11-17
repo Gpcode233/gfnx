@@ -276,9 +276,12 @@ def generic_rollout(
     # Logging data
     final_env_state = final_traj_stats.env_state
     traj_entropy = jnp.sum(jnp.where(traj_data.pad, 0.0, traj_data.info["entropy"]), axis=1)
+    log_gfn_reward = jnp.sum(jnp.where(traj_data.pad, 0.0, traj_data.log_gfn_reward), axis=1)
+
     return traj_data, {
         "entropy": traj_entropy,
         "final_env_state": final_env_state,
+        "log_gfn_reward": log_gfn_reward,
     }
 
 

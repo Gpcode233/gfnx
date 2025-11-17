@@ -22,17 +22,17 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
-import wandb
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
 
 import gfnx
+import wandb
 from gfnx.metrics.new import (
+    AccumulatedModesMetricsModule,
     MultiMetricsModule,
     MultiMetricsState,
     TestCorrelationMetricsModule,
-    AccumulatedModesMetricsModule,
 )
 
 log = logging.getLogger(__name__)
@@ -203,11 +203,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     metrics_state = train_state.metrics_module.update(
         metrics_state=train_state.metrics_state,
         rng_key=jax.random.key(0),  # not used, but required by the API
-        args=train_state.metrics_module.UpdateArgs(metrics_args={
-            "modes": AccumulatedModesMetricsModule.UpdateArgs(
-                states=transitions.state,
-            ),
-        }),
+        args=train_state.metrics_module.UpdateArgs(
+            metrics_args={
+                "modes": AccumulatedModesMetricsModule.UpdateArgs(
+                    states=transitions.state,
+                ),
+            }
+        ),
     )
 
     rng_key, eval_rng_key = jax.random.split(rng_key)
@@ -222,12 +224,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         {
             "metrics_state": metrics_state,
             "rng_key": eval_rng_key,
-            "args": train_state.metrics_module.ProcessArgs(metrics_args={
-                "correlation": TestCorrelationMetricsModule.ProcessArgs(
-                    policy_params=policy_params,
-                    env_params=train_state.env_params,
-                ),
-            }),
+            "args": train_state.metrics_module.ProcessArgs(
+                metrics_args={
+                    "correlation": TestCorrelationMetricsModule.ProcessArgs(
+                        policy_params=policy_params,
+                        env_params=train_state.env_params,
+                    ),
+                }
+            ),
         },
     )
 
@@ -256,6 +260,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_loss": mean_loss,
             "entropy": log_info["entropy"].mean(),
             "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": log_info["log_gfn_reward"].mean(),
+            "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
         metrics_state,
         train_state.config,
@@ -326,7 +333,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         ),
         "modes": AccumulatedModesMetricsModule(
             env=env,
-            distance_fn=lambda x, y: gfnx.utils.bitseq.distance(
+            distance_fn=lambda x, y: gfnx.utils.distances.hamming_distance(
                 gfnx.utils.bitseq.detokenize(x.tokens, env.k),
                 gfnx.utils.bitseq.detokenize(y.tokens, env.k),
             ),
@@ -349,12 +356,14 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Here we need to pass the initial parameters for all  metrics
     metrics_state = metrics_module.init(
         eval_init_key,
-        metrics_module.InitArgs(metrics_args={
-            "correlation": TestCorrelationMetricsModule.InitArgs(
-                env_params=env_params, test_set=test_set_states
-            ),
-            "modes": AccumulatedModesMetricsModule.InitArgs(modes=modes_states),
-        }),
+        metrics_module.InitArgs(
+            metrics_args={
+                "correlation": TestCorrelationMetricsModule.InitArgs(
+                    env_params=env_params, test_set=test_set_states
+                ),
+                "modes": AccumulatedModesMetricsModule.InitArgs(modes=modes_states),
+            }
+        ),
     )
 
     train_state = TrainState(

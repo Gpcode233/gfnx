@@ -4,6 +4,8 @@ import chex
 import jax
 import jax.numpy as jnp
 
+from .distances import hamming_distance
+
 
 @functools.partial(jax.jit, static_argnums=(0, 1, 3))
 def construct_mode_set(
@@ -18,20 +20,6 @@ def construct_mode_set(
     mode_set = choices.reshape(mode_set_size, -1)
     chex.assert_shape(mode_set, (mode_set_size, sentence_len))
     return mode_set
-
-
-def distance(s1, s2):
-    chex.assert_equal_shape([s1, s2])
-    return jnp.sum(s1 != s2)
-
-
-def distance_matrix(m1: chex.Array, m2: chex.Array):
-    return jax.vmap(lambda s1: jax.vmap(lambda s2: distance(s1, s2))(m2))(m1)
-
-
-def mode_set_distance(s: chex.Array, mode_set: chex.Array):
-    distances = jax.vmap(lambda ms: distance(s, ms))(mode_set)
-    return jnp.min(distances)
 
 
 @functools.partial(jax.jit, static_argnums=(1,))
@@ -84,6 +72,6 @@ def construct_binary_test_set(rng_key: chex.PRNGKey, mode_set: chex.Array):
             change_mask = change_mask.at[subset].set(True)
             test_set.append(jnp.logical_xor(mode, change_mask))
             assert len(test_set[-1]) == len_mode
-            assert distance(test_set[-1], mode) == cnt
+            assert hamming_distance(test_set[-1], mode) == cnt
     final_test_set = jnp.array(test_set)
     return final_test_set

@@ -1,8 +1,8 @@
-"""Single-file implementation for Detailed Balance in TFBind-8 environment.
+"""Single-file implementation for Sub-Trajectory Balance in TFBind-8 environment.
 
 Run the script with the following command:
 ```bash
-python baselines/db_tfbind.py
+python baselines/subtb_tfbind.py
 ```
 
 Also see https://jax.readthedocs.io/en/latest/gpu_performance_tips.html for
@@ -22,12 +22,13 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
-import wandb
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
 from optax.losses import squared_error
+
 import gfnx
+import wandb
 from gfnx.metrics.new import (
     ApproxDistributionMetricsModule,
     MultiMetricsModule,
@@ -69,11 +70,13 @@ class MLPPolicy(eqx.Module):
             output_size += n_bwd_actions
 
         encoder_key, pooler_key = jax.random.split(key)
-        self.encoder = eqx.nn.MLP(in_size=5 * 8, 
-                                  out_size=encoder_params["hidden_size"], 
-                                  width_size=encoder_params["hidden_size"], 
-                                  depth=encoder_params["depth"], 
-                                  key=encoder_key)
+        self.encoder = eqx.nn.MLP(
+            in_size=5 * 8,
+            out_size=encoder_params["hidden_size"],
+            width_size=encoder_params["hidden_size"],
+            depth=encoder_params["depth"],
+            key=encoder_key,
+        )
         self.pooler = eqx.nn.Linear(
             in_features=encoder_params["hidden_size"],
             out_features=output_size,
@@ -95,12 +98,8 @@ class MLPPolicy(eqx.Module):
                 output, [self.n_fwd_actions, self.n_fwd_actions + 1], axis=-1
             )
         else:
-            forward_logits, flow = jnp.split(
-                output, [self.n_fwd_actions], axis=-1
-            )
-            backward_logits = jnp.zeros(
-                shape=(self.n_bwd_actions,), dtype=jnp.float32
-            )
+            forward_logits, flow = jnp.split(output, [self.n_fwd_actions], axis=-1)
+            backward_logits = jnp.zeros(shape=(self.n_bwd_actions,), dtype=jnp.float32)
         return {
             "forward_logits": forward_logits,
             "log_flow": flow,
@@ -121,6 +120,7 @@ class TrainState(NamedTuple):
     metrics_state: MultiMetricsState
     exploration_schedule: optax.Schedule
 
+
 @eqx.filter_jit
 def train_step(idx: int, train_state: TrainState) -> TrainState:
     rng_key = train_state.rng_key
@@ -130,13 +130,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 1. Generate a batch of trajectories and split to transitions
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     # Get epsilon exploration value from config
     cur_eps = train_state.exploration_schedule(idx)
-    
+
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(
         fwd_rng_key: chex.PRNGKey,
@@ -147,22 +145,20 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
         policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
-        
+
         # Get forward logits
         fwd_logits = policy_outputs["forward_logits"]
-        
+
         # Apply epsilon exploration to logits
         if train:
             rng_key, exploration_key = jax.random.split(fwd_rng_key)
             batch_size, _ = fwd_logits.shape
-            exploration_mask = jax.random.bernoulli(
-                exploration_key, cur_eps, (batch_size,)
-            )
+            exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
             fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
         # Update policy outputs with modified logits
         policy_outputs = policy_outputs.copy()
         policy_outputs["forward_logits"] = fwd_logits
-        
+
         return fwd_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -174,6 +170,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         env=train_state.env,
         env_params=train_state.env_params,
     )
+
     # Step 2. Compute the loss
     def loss_fn(
         current_all_params: dict,
@@ -228,8 +225,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log_pb, jnp.expand_dims(bwd_actions_traj, axis=-1), axis=-1
         ).squeeze(-1)
         log_pb_along_traj = jnp.where(pad_mask, 0.0, log_pb_along_traj)
-        log_pb_along_traj = log_pb_along_traj +\
-            jnp.where(pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1])
+        log_pb_along_traj = log_pb_along_traj + jnp.where(
+            pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1]
+        )
 
         # log_flow
         log_flow = jnp.where(current_traj_data.pad, 0.0, log_flow_traj)
@@ -244,7 +242,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                     log_flow_finish = jnp.where(done[j - 1], 0.0, log_flow[j])
                     log_pb_subtraj = log_flow_finish + (log_pb * mask).sum()
                     return weight * squared_error(log_pf_subtraj, log_pb_subtraj), weight
+
                 return jax.lax.cond(pad[j - 1], lambda: (0.0, 0.0), fn)
+
             i, j = jnp.triu_indices(traj_len + 1, k=1)
             weighted_loss, weighted_norm = jax.vmap(
                 process_pair_idx, in_axes=(0, 0, None, None, None, None, None)
@@ -343,11 +343,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_loss": mean_loss,
             "entropy": log_info["entropy"].mean(),
             "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": log_info["log_gfn_reward"].mean(),
+            "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
         metrics_state,
         train_state.config,
         ordered=True,
-    )    
+    )
 
     # Return the updated train state
     return train_state._replace(
@@ -398,9 +401,7 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Define parameter labels for multi_transform
     param_labels = {
-        "model_params": jax.tree.map(
-            lambda _: "network_lr", model_params_init
-        ),
+        "model_params": jax.tree.map(lambda _: "network_lr", model_params_init),
     }
 
     optimizer_defs = {
@@ -434,7 +435,6 @@ def run_experiment(cfg: OmegaConf) -> None:
         ),
     )
 
-
     train_state = TrainState(
         rng_key=rng_key,
         config=cfg,
@@ -448,9 +448,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         exploration_schedule=exploration_schedule,
     )
     # Split train state into parameters and static parts to make jit work.
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
     @functools.partial(jax.jit, donate_argnums=(1,))
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging["tqdm_print_rate"])
@@ -468,9 +466,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=["SubTB", env.name.upper()],
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax lax.fori_loop

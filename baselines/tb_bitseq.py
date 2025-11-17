@@ -22,17 +22,17 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
-import wandb
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
 
 import gfnx
+import wandb
 from gfnx.metrics.new import (
+    AccumulatedModesMetricsModule,
     MultiMetricsModule,
     MultiMetricsState,
     TestCorrelationMetricsModule,
-    AccumulatedModesMetricsModule,
 )
 
 log = logging.getLogger(__name__)
@@ -84,20 +84,16 @@ class TransformerPolicy(eqx.Module):
         key: chex.PRNGKey | None = None,
     ) -> chex.Array:
         pos_ids = jnp.arange(obs_ids.shape[0])
-        encoded_obs = self.encoder(
-            obs_ids, pos_ids, enable_dropout=enable_dropout, key=key
-        )["layers_out"][-1]  # [seq_len, hidden_size]
-        #encoded_obs = encoded_obs.mean(axis=0)  # Average pooling
+        encoded_obs = self.encoder(obs_ids, pos_ids, enable_dropout=enable_dropout, key=key)[
+            "layers_out"
+        ][-1]  # [seq_len, hidden_size]
+        # encoded_obs = encoded_obs.mean(axis=0)  # Average pooling
         output = (jax.vmap(self.pooler)(encoded_obs)).mean(0)
         if self.train_backward_policy:
-            forward_logits, backward_logits = jnp.split(
-                output, [self.n_fwd_actions], axis=-1
-            )
+            forward_logits, backward_logits = jnp.split(output, [self.n_fwd_actions], axis=-1)
         else:
             forward_logits = output
-            backward_logits = jnp.zeros(
-                shape=(self.n_bwd_actions,), dtype=jnp.float32
-            )
+            backward_logits = jnp.zeros(shape=(self.n_bwd_actions,), dtype=jnp.float32)
         return {
             "forward_logits": forward_logits,
             "backward_logits": backward_logits,
@@ -127,16 +123,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     env_params = train_state.env_params
 
     # Get model parameters and static parts
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     # Step 1. Generate a batch of trajectories
     rng_key, sample_traj_key = jax.random.split(rng_key)
 
     # Get epsilon exploration value from config
     cur_eps = train_state.exploration_schedule(idx)
-    
+
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(
         fwd_rng_key: chex.PRNGKey,
@@ -147,22 +141,20 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
         policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
-        
+
         # Get forward logits
         fwd_logits = policy_outputs["forward_logits"]
-        
+
         # Apply epsilon exploration to logits
         if train:
             rng_key, exploration_key = jax.random.split(fwd_rng_key)
             batch_size, _ = fwd_logits.shape
-            exploration_mask = jax.random.bernoulli(
-                exploration_key, cur_eps, (batch_size,)
-            )
+            exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
             fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
         # Update policy outputs with modified logits
         policy_outputs = policy_outputs.copy()
         policy_outputs["forward_logits"] = fwd_logits
-        
+
         return fwd_logits, policy_outputs
 
     traj_data, aux_info = gfnx.utils.forward_rollout(
@@ -190,24 +182,18 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         model_to_call = eqx.combine(model_learnable_params, static_model_parts)
 
         # Get policy outputs for the entire trajectory
-        policy_outputs_traj = jax.vmap(jax.vmap(model_to_call))(
-            current_traj_data.obs
-        )
+        policy_outputs_traj = jax.vmap(jax.vmap(model_to_call))(current_traj_data.obs)
 
         # Step 2.1 Compute forward actions and log probabilities
         fwd_logits_traj = policy_outputs_traj["forward_logits"]
 
         # Vmap get_invalid_mask over the time dimension
-        invalid_fwd_mask = jax.vmap(
-            current_env.get_invalid_mask, in_axes=(1, None), out_axes=1
-        )(current_traj_data.state, current_env_params)
+        invalid_fwd_mask = jax.vmap(current_env.get_invalid_mask, in_axes=(1, None), out_axes=1)(
+            current_traj_data.state, current_env_params
+        )
 
-        masked_fwd_logits_traj = gfnx.utils.mask_logits(
-            fwd_logits_traj, invalid_fwd_mask
-        )
-        fwd_all_log_probs_traj = jax.nn.log_softmax(
-            masked_fwd_logits_traj, axis=-1
-        )
+        masked_fwd_logits_traj = gfnx.utils.mask_logits(fwd_logits_traj, invalid_fwd_mask)
+        fwd_all_log_probs_traj = jax.nn.log_softmax(masked_fwd_logits_traj, axis=-1)
 
         fwd_logprobs_traj = jnp.take_along_axis(
             fwd_all_log_probs_traj,
@@ -215,17 +201,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             axis=-1,
         ).squeeze(-1)
 
-        fwd_logprobs_traj = jnp.where(
-            current_traj_data.pad, 0.0, fwd_logprobs_traj
-        )
+        fwd_logprobs_traj = jnp.where(current_traj_data.pad, 0.0, fwd_logprobs_traj)
         sum_log_pf_along_traj = fwd_logprobs_traj.sum(axis=1)
         # Use extracted logZ_val
         log_pf_traj = logZ_val + sum_log_pf_along_traj
 
         # Step 2.2 Compute backward actions and log probabilities
-        prev_states = jax.tree.map(
-            lambda x: x[:, :-1], current_traj_data.state
-        )
+        prev_states = jax.tree.map(lambda x: x[:, :-1], current_traj_data.state)
         fwd_actions = current_traj_data.action[:, :-1]
         curr_states = jax.tree.map(lambda x: x[:, 1:], current_traj_data.state)
 
@@ -244,12 +226,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             out_axes=1,
         )(curr_states, current_env_params)
 
-        masked_bwd_logits_traj = gfnx.utils.mask_logits(
-            bwd_logits_for_pb, invalid_bwd_mask
-        )
-        bwd_all_log_probs_traj = jax.nn.log_softmax(
-            masked_bwd_logits_traj, axis=-1
-        )
+        masked_bwd_logits_traj = gfnx.utils.mask_logits(bwd_logits_for_pb, invalid_bwd_mask)
+        bwd_all_log_probs_traj = jax.nn.log_softmax(masked_bwd_logits_traj, axis=-1)
 
         log_pb_selected = jnp.take_along_axis(
             bwd_all_log_probs_traj,
@@ -261,13 +239,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         log_pb_selected = jnp.where(pad_mask_for_bwd, 0.0, log_pb_selected)
 
         log_rewards_at_steps = current_traj_data.log_gfn_reward[:, :-1]
-        masked_log_rewards_at_steps = jnp.where(
-            pad_mask_for_bwd, 0.0, log_rewards_at_steps
-        )
+        masked_log_rewards_at_steps = jnp.where(pad_mask_for_bwd, 0.0, log_rewards_at_steps)
 
-        log_pb_plus_rewards_along_traj = (
-            log_pb_selected + masked_log_rewards_at_steps
-        )
+        log_pb_plus_rewards_along_traj = log_pb_selected + masked_log_rewards_at_steps
         target = jnp.sum(log_pb_plus_rewards_along_traj, axis=1)
 
         loss = optax.losses.squared_error(log_pf_traj, target).mean()
@@ -298,11 +272,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     metrics_state = train_state.metrics_module.update(
         metrics_state=train_state.metrics_state,
         rng_key=jax.random.key(0),  # not used, but required by the API
-        args=train_state.metrics_module.UpdateArgs(metrics_args={
-            "modes": AccumulatedModesMetricsModule.UpdateArgs(
-                states=transitions.state,
-            ),
-        }),
+        args=train_state.metrics_module.UpdateArgs(
+            metrics_args={
+                "modes": AccumulatedModesMetricsModule.UpdateArgs(
+                    states=transitions.state,
+                ),
+            }
+        ),
     )
 
     rng_key, eval_rng_key = jax.random.split(rng_key)
@@ -317,12 +293,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         {
             "metrics_state": metrics_state,
             "rng_key": eval_rng_key,
-            "args": train_state.metrics_module.ProcessArgs(metrics_args={
-                "correlation": TestCorrelationMetricsModule.ProcessArgs(
-                    policy_params=policy_params,
-                    env_params=train_state.env_params,
-                ),
-            }),
+            "args": train_state.metrics_module.ProcessArgs(
+                metrics_args={
+                    "correlation": TestCorrelationMetricsModule.ProcessArgs(
+                        policy_params=policy_params,
+                        env_params=train_state.env_params,
+                    ),
+                }
+            ),
         },
     )
 
@@ -361,10 +339,10 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Return the updated train state
     return train_state._replace(
         rng_key=rng_key,
-        model=new_model, 
-        opt_state=new_opt_state, 
-        metrics_state=metrics_state, 
-        logZ=new_logZ
+        model=new_model,
+        opt_state=new_opt_state,
+        metrics_state=metrics_state,
+        logZ=new_logZ,
     )
 
 
@@ -388,9 +366,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         reward_exponent=cfg.environment.reward_exponent,
     )
     # Initialize the environment and its inner parameters
-    env = gfnx.BitseqEnvironment(
-        reward_module, n=cfg.environment.n, k=cfg.environment.k
-    )
+    env = gfnx.BitseqEnvironment(reward_module, n=cfg.environment.n, k=cfg.environment.k)
     env_params = env.init(env_init_key)
 
     rng_key, net_init_key = jax.random.split(rng_key)
@@ -423,9 +399,7 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Define parameter labels for multi_transform
     param_labels = {
-        "model_params": jax.tree.map(
-            lambda _: "network_lr", model_params_init
-        ),
+        "model_params": jax.tree.map(lambda _: "network_lr", model_params_init),
         "logZ": "logZ_lr",
     }
 
@@ -439,9 +413,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
 
-    def bwd_policy_fn(
-        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params
-    ) -> chex.Array:
+    def bwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -456,7 +428,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         ),
         "modes": AccumulatedModesMetricsModule(
             env=env,
-            distance_fn=lambda x, y: gfnx.utils.bitseq.distance(
+            distance_fn=lambda x, y: gfnx.utils.distances.hamming_distance(
                 gfnx.utils.bitseq.detokenize(x.tokens, env.k),
                 gfnx.utils.bitseq.detokenize(y.tokens, env.k),
             ),
@@ -479,12 +451,14 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Here we need to pass the initial parameters for all  metrics
     metrics_state = metrics_module.init(
         eval_init_key,
-        metrics_module.InitArgs(metrics_args={
-            "correlation": TestCorrelationMetricsModule.InitArgs(
-                env_params=env_params, test_set=test_set_states
-            ),
-            "modes": AccumulatedModesMetricsModule.InitArgs(modes=modes_states),
-        }),
+        metrics_module.InitArgs(
+            metrics_args={
+                "correlation": TestCorrelationMetricsModule.InitArgs(
+                    env_params=env_params, test_set=test_set_states
+                ),
+                "modes": AccumulatedModesMetricsModule.InitArgs(modes=modes_states),
+            }
+        ),
     )
 
     train_state = TrainState(
@@ -501,9 +475,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         logZ=logZ,
     )
     # Split train state into parameters and static parts to make jit work.
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
     @functools.partial(jax.jit, donate_argnums=(1,))
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging["tqdm_print_rate"])
@@ -521,9 +493,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=["TB", env.name.upper()],
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax lax.fori_loop
@@ -553,4 +523,4 @@ def run_experiment(cfg: OmegaConf) -> None:
 
 
 if __name__ == "__main__":
-    run_experiment() 
+    run_experiment()

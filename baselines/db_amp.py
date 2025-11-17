@@ -1,4 +1,4 @@
-"""Single-file implementation for Detailed Balance in hypergrid environment.
+"""Single-file implementation for Detailed Balance in AMP environment.
 
 Run the script with the following command:
 ```bash
@@ -184,11 +184,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             jnp.where(transitions.pad, 0.0, fwd_logprobs + log_flow),
             jnp.where(transitions.pad, 0.0, target),
         ).mean()
-        return loss, log_info
+        return loss
 
-    (mean_loss, log_info), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
-        train_state.model
-    )
+    mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads
     updates, opt_state = train_state.optimizer.update(
         grads,
@@ -259,6 +257,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "entropy": log_info["entropy"].mean(),
             "grad_norm": optax.tree_utils.tree_l2_norm(grads),
             "mean_length": generation_length.mean(),
+            "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": log_info["log_gfn_reward"].mean(),
+            "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
         metrics_state,
         train_state.config,
@@ -325,8 +326,9 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     def amp_distance_fn(lhs_state: gfnx.AMPEnvState, rhs_state: gfnx.AMPEnvState) -> chex.Array:
         """Compute the distance between two AMP states."""
-        # TODO: transfer it to utils
-        return gfnx.metrics.amp.distance(lhs_state.tokens, rhs_state.tokens, env.nchar)
+        return gfnx.utils.distances.levenstein_distance(
+            lhs_state.tokens, rhs_state.tokens, env.nchar
+        )
 
     metrics_module = MultiMetricsModule({
         "topk": TopKMetricsModule(

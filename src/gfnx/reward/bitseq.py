@@ -4,13 +4,11 @@ import chex
 import jax
 import jax.numpy as jnp
 
+from gfnx.utils.distances import hamming_distance
+
 from ..base import BaseRewardModule, TLogReward, TReward, TRewardParams
 from ..environment import BitseqEnvParams, BitseqEnvState
-from ..utils.bitseq import (
-    construct_mode_set,
-    detokenize,
-    mode_set_distance,
-)
+from ..utils.bitseq import construct_mode_set, detokenize
 
 
 class BitseqRewardModule(BaseRewardModule[BitseqEnvState, BitseqEnvParams]):
@@ -52,10 +50,14 @@ class BitseqRewardModule(BaseRewardModule[BitseqEnvState, BitseqEnvParams]):
             )
         }
 
+    def _mode_set_distance(self, s: chex.Array, mode_set: chex.Array):
+        distances = jax.vmap(lambda ms: hamming_distance(s, ms))(mode_set)
+        return jnp.min(distances)
+
     def log_reward(self, state: BitseqEnvState, env_params: BitseqEnvParams) -> TLogReward:
-        def single_log_reward(tokens, reward_params):
+        def single_log_reward(tokens: chex.Array, reward_params: TRewardParams):
             bitseq = detokenize(tokens, self.k)
-            mode_dist = mode_set_distance(bitseq, reward_params["mode_set"])
+            mode_dist = self._mode_set_distance(bitseq, reward_params["mode_set"])
             return -self.reward_exponent * mode_dist.astype(jnp.float32)
 
         return jax.vmap(single_log_reward, in_axes=(0, None))(

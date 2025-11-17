@@ -27,8 +27,8 @@ from jax_tqdm import loop_tqdm
 from omegaconf import OmegaConf
 
 import gfnx
-from gfnx.metrics.new import ApproxDistributionMetricsModule, ApproxDistributionMetricsState
 import wandb
+from gfnx.metrics.new import ApproxDistributionMetricsModule, ApproxDistributionMetricsState
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -263,6 +263,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_loss": mean_loss,
             "entropy": log_info["entropy"].mean(),
             "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
+            "mean_log_reward": log_info["log_gfn_reward"].mean(),
+            "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
         metrics_state,
         train_state.config,

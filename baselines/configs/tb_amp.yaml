@@ -34,7 +34,8 @@ metrics:
   batch_size : 16
 
 logging:
-  track_each: 500 # in terms of total training steps, not divited by num_envs
+  track_each: 1 # in terms of total training steps, not divited by num_envs
+  eval_each: 500 # in terms of total training steps, not divited by num_envs
   tqdm_print_rate: 20
   use_wandb: False
 

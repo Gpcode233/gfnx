@@ -1,5 +1,5 @@
 from . import bitseq
-from .corr import spearmanr
+from . import corr
 from .dag import load_dag_samples
 from .distances import kl_divergence, total_variation_distance
 from .exploration import (
@@ -33,6 +33,7 @@ from .rollout import (
 
 __all__ = [
     "bitseq",
+    "corr",
     "AMINO_ACIDS",
     "ExplorationState",
     "NUCLEOTIDES",
@@ -52,7 +53,6 @@ __all__ = [
     "kl_divergence",
     "load_dag_samples",
     "mask_logits",
-    "spearmanr",
     "split_traj_to_transitions",
     "total_variation_distance",
     "QM9_SMALL_BLOCKS",
