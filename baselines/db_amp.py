@@ -13,7 +13,6 @@ performance tips when running on GPU, i.e., XLA flags.
 import functools
 import logging
 import os
-os.environ["WANDB_MODE"] = "offline"
 from typing import NamedTuple
 
 import chex
@@ -25,7 +24,6 @@ import optax
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
-from typing import NamedTuple
 
 import gfnx
 from gfnx.metrics.new import (MultiMetricsModule, 
