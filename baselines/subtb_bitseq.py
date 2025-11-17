@@ -24,7 +24,6 @@ import optax
 from jax_tqdm import loop_tqdm
 from jaxtyping import Array, Int
 from omegaconf import OmegaConf
-from optax.losses import squared_error
 
 import gfnx
 from gfnx.metrics import (
@@ -239,23 +238,24 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log_pb, jnp.expand_dims(bwd_actions_traj, axis=-1), axis=-1
         ).squeeze(-1)
         log_pb_along_traj = jnp.where(pad_mask, 0.0, log_pb_along_traj)
-        log_pb_along_traj = log_pb_along_traj + jnp.where(
-            pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1]
-        )
 
         # log_flow
-        log_flow = jnp.where(current_traj_data.pad, 0.0, log_flow_traj)
+        log_flow_traj = log_flow_traj.at[:, 1:].set(
+            jnp.where(done_mask, current_traj_data.log_gfn_reward[:, :-1], log_flow_traj[:, 1:])
+        )
+        log_flow_traj = log_flow_traj.at[:, 1:].set(
+            jnp.where(pad_mask, 0.0, log_flow_traj[:, 1:])
+        )
 
         def process_one_traj(log_pf, log_pb, log_flow, done, pad):
             def process_pair_idx(i, j, log_pf, log_pb, log_flow, done, pad):
                 def fn():
                     mask = jnp.logical_and(i <= jnp.arange(traj_len), jnp.arange(traj_len) < j)
                     weight = jnp.power(train_state.config.agent.lmbd, j - i)
-                    log_flow_start = log_flow[i]
-                    log_pf_subtraj = log_flow_start + (log_pf * mask).sum()
-                    log_flow_finish = jnp.where(done[j - 1], 0.0, log_flow[j])
-                    log_pb_subtraj = log_flow_finish + (log_pb * mask).sum()
-                    return weight * squared_error(log_pf_subtraj, log_pb_subtraj), weight
+                    log_pf_subtraj = log_flow[i] + (log_pf * mask).sum()
+                    log_pb_subtraj = log_flow[j] + (log_pb * mask).sum()
+                    loss = optax.losses.squared_error(log_pf_subtraj, log_pb_subtraj)
+                    return weight * loss, weight
 
                 return jax.lax.cond(pad[j - 1], lambda: (0.0, 0.0), fn)
 
@@ -268,7 +268,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         loss = jax.vmap(process_one_traj)(
             log_pf_along_traj,
             log_pb_along_traj,
-            log_flow,
+            log_flow_traj,
             done_mask,
             pad_mask,
         ).mean()
