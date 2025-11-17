@@ -463,11 +463,10 @@ class FixedPrependAppendSequenceEnvironment(SequenceEnvironment):
         return spaces.Discrete(2)
 
 
-# Might contain some bugs
 class AutoregressiveSequenceEnvironment(SequenceEnvironment):
     """
-    Class for sequence environments with a fixed length and
-    non-autoregressive generation.
+    Class for sequence environments with a non-fixed length and
+    autoregressive generation.
     """
 
     def _single_transition(
@@ -586,7 +585,7 @@ class AutoregressiveSequenceEnvironment(SequenceEnvironment):
 
 class NonAutoregressiveSequenceEnvironment(SequenceEnvironment):
     """
-    Class for sequence environments with a fixed length and
+    Class for sequence environments with a non-fixed length and
     non-autoregressive generation.
     """
 
