@@ -30,13 +30,6 @@ class AMPEnvironment(AutoregressiveSequenceEnvironment):
 
     def get_obs(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         """Applies observation function to state."""
-        # Add BOS token to the beginning of the sentence
-        num_envs = state.time.shape[0]
-        to_append = jnp.full(
-                    shape=(num_envs, 1),
-                    fill_value=self.pad_token,
-                    dtype=state.tokens.dtype,
-                )
 
         # Use PAD if the last token is already PAD or EOS, otherwise use EOS
         last_token = state.tokens[:, -1]

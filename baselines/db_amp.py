@@ -13,6 +13,7 @@ performance tips when running on GPU, i.e., XLA flags.
 import functools
 import logging
 import os
+os.environ["WANDB_MODE"] = "offline"
 from typing import NamedTuple
 
 import chex
@@ -337,7 +338,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,
-            "max_length": env.max_length,
+            "max_length": env.max_length + 1,
             **OmegaConf.to_container(cfg.network),
         },
         key=net_init_key,
