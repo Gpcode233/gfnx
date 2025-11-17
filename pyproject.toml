@@ -22,7 +22,13 @@ dependencies = [
   "matplotlib"
 ]
 authors = [
-  { name="Daniil Tiapkin", email="daniil.tiapkin@polytechnique.edu" },
+  { name="Daniil Tiapkin" },
+  { name="Arten Agarkov" },
+  { name="Nikita Morozov" },
+  { name="Ian Maksimov" },
+  { name="Askar Tsyganov" },
+  { name="Timofei Gritsaev" },
+  { name="Sergey Samsonov" },
 ]
 license = "MIT"
 description = "Environments for Generative Flow Networks in JAX"

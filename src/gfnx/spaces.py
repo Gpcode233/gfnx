@@ -1,6 +1,7 @@
-"""Gymnax space classes.
+"""Gymnax-style space classes.
 
-TODO: Do we really need it? How we can use it?
+This module contains minimal jittable implementations of gymnax-style spaces.
+Credits: https://github.com/RobertTLange/gymnax
 """
 
 import collections

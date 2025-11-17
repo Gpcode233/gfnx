@@ -7,7 +7,7 @@ $$
 \begin{aligned}
 \mathrm{EUBO} &= \mathrm{\overline{EUBO}} - \log Z \geq 0
 \\
-\mathrm{\overline{EUBO}} &= \mathbb{E}_{\tau \sim \frac{R}{Z} \cdot P_B} \Bigg[ \log R(s_T) + \sum_{t=1}^T \log P_B(s_{t-1} \mid s_t) - \sum_{t=1}^T \log P_F(s_t \mid s_{t-1}) \Bigg] \geq \log Z
+\mathrm{\overline{EUBO}} &\mathbb{E}_{\tau \sim \frac{R}{Z} \cdot P_B} \Bigg[ \log R(s_T) + \sum_{t=1}^T \log P_B(s_{t-1} \mid s_t) - \sum_{t=1}^T \log P_F(s_t \mid s_{t-1}) \Bigg] &\geq \log Z
 \end{aligned}
 $$
 

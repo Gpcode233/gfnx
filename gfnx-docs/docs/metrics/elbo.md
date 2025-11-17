@@ -6,10 +6,10 @@ forward policy aligns with the backward distribution. Formally, it is defined as
 
 $$
 \begin{aligned}
-\mathrm{ELBO} &= \overline{\mathrm{ELBO}} - \log Z \leq 0
+\mathrm{ELBO} &= \mathrm{\overline{ELBO}} - \log Z \leq 0
 \\
 \mathrm{\overline{ELBO}} &= 
-\mathbb{E}_{\tau \sim P_F} \Bigg[ \log R(s_T) + \sum_{t=1}^T \log P_B(s_{t-1} \mid s_t) - \sum_{t=1}^T \log P_F(s_t \mid s_{t-1}) \Bigg] \leq \log Z
+\mathbb{E}_{\tau \sim P_F} \Bigg[ \log R(s_T) + \sum_{t=1}^T \log P_B(s_{t-1} \mid s_t) - \sum_{t=1}^T \log P_F(s_t \mid s_{t-1}) \Bigg] \leq \\ &\leq \log Z
 \end{aligned}
 $$
 
