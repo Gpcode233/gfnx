@@ -6,14 +6,8 @@ from .bitseq import (
     tokenize,
 )
 from .corr import spearmanr
-from .exploration import (
-    ExplorationState,
-    apply_epsilon_greedy,
-    apply_epsilon_greedy_vmap,
-    create_exploration_schedule,
-)
+from .dag import load_dag_samples
 from .masking import mask_logits
-from .phylogenetic_tree import get_phylo_initialization_args
 from .proteins import (
     AMINO_ACIDS,
     PROTEINS_FULL_ALPHABET,
@@ -31,13 +25,9 @@ __all__ = [
     "AMINO_ACIDS",
     "PROTEINS_FULL_ALPHABET",
     "PROTEINS_SPECIAL_TOKENS",
-    "apply_epsilon_greedy",
-    "apply_epsilon_greedy_vmap",
     "backward_rollout",
     "construct_binary_test_set",
     "construct_mode_set",
-    "create_exploration_schedule",
-    "get_phylo_initialization_args",
     "detokenize",
     "forward_rollout",
     "mask_logits",
@@ -47,5 +37,4 @@ __all__ = [
     "tokenize",
     "TrajectoryData",
     "TransitionData",
-    "ExplorationState",
 ]
