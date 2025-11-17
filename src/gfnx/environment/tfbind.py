@@ -3,7 +3,6 @@ from ..utils import NUCLEOTIDES, NUCLEOTIDES_FULL_ALPHABET
 from .sequence import (
     EnvParams,  # noqa: F401
     EnvState,  # noqa: F401
-    NonAutoregressiveSequenceEnvironment,
     FixedAutoregressiveSequenceEnvironment,
 )
 
@@ -23,3 +22,8 @@ class TFBind8Environment(FixedAutoregressiveSequenceEnvironment):
             eos_token=self.char_to_id["[EOS]"],
             pad_token=self.char_to_id["[PAD]"],
         )
+    
+    @property
+    def name(self) -> str:
+        """Environment name."""
+        return "TFBind8-v0"

@@ -45,6 +45,7 @@ class MLPPolicy(eqx.Module):
         hidden_size (int): The size of the hidden layers in the MLP.
         train_backward_policy (bool): Flag indicating whether to train
             the backward policy.
+        depth (int): The number of layers in the MLP.
         rng_key (chex.PRNGKey): Random key for initializing the MLP.
 
     Methods:
@@ -65,6 +66,7 @@ class MLPPolicy(eqx.Module):
         n_bwd_actions: int,
         hidden_size: int,
         train_backward_policy: bool,
+        depth: int,
         rng_key: chex.PRNGKey,
     ):
         self.train_backward_policy = train_backward_policy
@@ -78,7 +80,7 @@ class MLPPolicy(eqx.Module):
             in_size=input_size,
             out_size=output_size,
             width_size=hidden_size,
-            depth=3,
+            depth=depth,
             key=rng_key,
         )
 
@@ -236,7 +238,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                 if key != "eval/empirical_distribution"
             })
             if cfg.logging.use_wandb:
-                empirical_dist = eval_info["eval/empirical_distribution"][:, :]
+                empirical_dist = eval_info["eval/empirical_distribution"]
+                ndim = len(empirical_dist.shape)
+                index_tuple = (slice(None), slice(None), *([0] * (ndim - 2)))
+                # Take a slice of the empirical distribution to visualize it
+                empirical_dist = empirical_dist[index_tuple]
                 empirical_dist = (empirical_dist - empirical_dist.min()) / (
                     empirical_dist.max() - empirical_dist.min()
                 )
@@ -301,7 +307,8 @@ def run_experiment(cfg: OmegaConf) -> None:
         n_fwd_actions=env.action_space.n,
         n_bwd_actions=env.backward_action_space.n,
         hidden_size=cfg.network.hidden_size,
-        train_backward_policy=False,
+        train_backward_policy=cfg.agent.train_backward,
+        depth=cfg.network.depth,
         rng_key=net_init_key,
     )
 

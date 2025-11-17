@@ -22,3 +22,8 @@ class AMPEnvironment(PrependAppendSequenceEnvironment):
             eos_token=self.char_to_id["[EOS]"],
             pad_token=self.char_to_id["[PAD]"],
         )
+    
+    @property
+    def name(self) -> str:
+        """Environment name."""
+        return "AMP-v0"

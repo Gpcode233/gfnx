@@ -9,7 +9,7 @@ Installtion:
 ```
 To install packages for algorithms, use
 ```
-    pip install -e '.[algs]'
+    pip install -e '.[baselines]'
 ```
 
 TODO: Establish right depenencies everywhere.

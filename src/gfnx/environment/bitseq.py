@@ -23,3 +23,8 @@ class BitseqEnvironment(NonAutoregressiveSequenceEnvironment):
             eos_token=2**k + 2,
             pad_token=2**k,
         )
+    
+    @property
+    def name(self) -> str:
+        """Environment name."""
+        return f"Bitseq-{self.n}-{self.k}-v0"

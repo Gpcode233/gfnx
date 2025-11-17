@@ -301,7 +301,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     model = TransformerPolicy(
         n_fwd_actions=env.action_space.n,
         n_bwd_actions=env.backward_action_space.n,
-        train_backward_policy=False,
+        train_backward_policy=cfg.agent.train_backward,
         encoder_params={
             "pad_id": env.pad_token,
             "vocab_size": env.ntoken,

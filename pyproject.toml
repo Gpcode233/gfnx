@@ -36,7 +36,10 @@ baselines = [
   "equinox",
   "flashbax",
   "wandb",
-  "orbax-checkpoint"
+  "orbax-checkpoint",
+  "hydra-core",
+  "jax_tqdm",
+  "pillow"
 ]
 
 [project.urls]
