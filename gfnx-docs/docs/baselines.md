@@ -4,11 +4,11 @@ The `baselines/` directory collects reproducible training scripts for canonical 
 
 ## Implementation matrix
 
-The table below summarizes which method-environment combinations currently ship with the repository. Cells marked with &#x2705; point to a ready-to-run script in `baselines/`; &#x274C; indicates that the pairing has not been implemented yet.
+The table below summarizes which method-environment combinations currently ship with the repository. Cells marked with &#x2705; point to a ready-to-run script in `baselines/`; &#x1F6A7; means experimental and unverified script that may not work; &#x274C; indicates that the pairing has not been implemented yet.
 
 | Method / Environment | Hypergrid | BitSeq | TFBind-8 | QM9 Small | AMP | GFP |
 | --- | --- | --- | --- | --- | --- | --- |
-| Detailed Balance (DB)&nbsp;[1] | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x2705; |
+| Detailed Balance (DB)&nbsp;[1] | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x1F6A7; |
 | Trajectory Balance (TB)&nbsp;[2] | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x2705; | &#x274C; |
 | Sub-Trajectory Balance (SubTB)&nbsp;[3] | &#x2705; | &#x2705; | &#x2705; | &#x274C; | &#x274C; | &#x274C; |
 

@@ -49,8 +49,8 @@ class EUBOMetricsModule(BaseMetricsModule):
         bwd_policy_fn: Backward policy function for sampling trajectories
             starting from terminal states and computing log-ratios.
         n_rounds: Number of sampling rounds for statistical stability.
-        batch_size: The number of trajectories to sample in each batch.
-        logZ: The logarithm of the true normalizing constant, if tractable.
+        batch_size: Batch size used when evaluating policy over states.
+        rng_key: Key used for pseudo random generation.
     """
 
     def __init__(

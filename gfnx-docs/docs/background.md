@@ -20,4 +20,4 @@ In practice we parameterize $\mathcal{P}_F$ (and sometimes supporting quantities
 
 These objectives can be trained on-policy with trajectories sampled from the current forward policy, or off-policy using replay buffers and exploration strategies. Depending on the environment, we may jointly learn $\mathcal{P}_B$ or keep it fixed (e.g., uniform over parents); in either case, there always exists a unique forward policy that satisfies the trajectory balance constraint for a given backward policy. 
 
-The GFNX library provides ready-to-use implementations of these ideas, making it straightforward to prototype new objectives, environments, and inference procedures.
+The `gfnx` library provides ready-to-use implementations of these ideas, making it straightforward to prototype new objectives, environments, and inference procedures.

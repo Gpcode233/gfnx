@@ -116,7 +116,12 @@ The goal is to generate a protein sequence of length $\le 60$ (where the vocabul
 
 ## Proxy reward model training
 
-### TODO
+We have implemented a code to train a proxy reward function with [Equinox](https://github.com/patrick-kidger/equinox) library for this environment in the `proxy` folder. The weights for the AMP model are already pretrained and stored in `/proxy/weights/amp` folder using `orbax` checkpointer. If you wish to perform training yourself, follow instructions in `proxy/datasets/amp.py` for installation of required packages, and then just run
+```bash
+python proxy/train_proxy.py --config-name amp
+```
+
+All the configuration is handled by Hydra, so it is possible to play with the training of your proxy network as you wish.
 
 ## Quick start
 
@@ -125,26 +130,69 @@ import jax
 import jax.numpy as jnp
 import gfnx
 
-TODO
+# 1. Load the reward model
+reward_module = gfnx.EqxProxyAMPRewardModule(
+    proxy_config_path="proxy/configs/amp.yaml",
+    pretrained_proxy_path="proxy/weights/amp/model",
+    reward_exponent=1.0,
+    min_reward=1e-6
+)
+
+# 2. Create an environment and initialize it
+env = gfnx.AMPEnvironment(reward_module)
+# env_params will store the weights of the reward function
+env_params = env.init(jax.random.PRNGKey(0))
+
+# 3. Reset to get the initial observation/state batch.
+obs, state = env.reset(num_envs=1, env_params=env_params)
+
+# 4. Take a forward step.
+action = jnp.array([0], dtype=jnp.int32)
+obs, state, log_reward, done, _ = env.step(state, action, env_params)
 ```
 
-# GFP environment
+# GFP environment (experimental)
 
 The goal is to generate a protein sequence of a fixed length $237$ (where the vocabulary consists of $20$ amino acids) with
 fluorescence properties. The proxy reward model is a neural network regressor trained on a dataset of proteins with their fluorescence scores from Sarkisyan et al. (2016). The generation is done autoregressively. `gfnx` implements the environment from Madan et al. (2023).
 
 ## Proxy reward model training
 
-### TODO
+Similarly to AMP, we have implemented to code to train the proxy reward function with [Equinox](https://github.com/patrick-kidger/equinox) library. The enviornment is **experimental** and we do not provide (yet) the pretrained proxy.
+If you wish to perform training yourself, follow instructions in `proxy/datasets/gfp.py` for installation of required packages, and then just run
+
+```bash
+python proxy/train_proxy.py --config-name gfp
+```
+
 
 ## Quick start
+
 
 ```python
 import jax
 import jax.numpy as jnp
 import gfnx
 
-TODO
+# 1. Load the reward model. Currently, we load a dummy reward model
+reward_module = gfnx.EqxProxyGFPRewardModule(
+    proxy_config_path="proxy/configs/dummy_gfp.yaml",
+    pretrained_proxy_path="proxy/weights/dummy_gfp/model",
+    reward_exponent=1.0,
+    min_reward=1e-6
+)
+
+# 2. Create an environment and initialize it
+env = gfnx.GFPEnvironment(reward_module)
+# env_params will store the weights of the reward function
+env_params = env.init(jax.random.PRNGKey(0))
+
+# 3. Reset to get the initial observation/state batch.
+obs, state = env.reset(num_envs=1, env_params=env_params)
+
+# 4. Take a forward step.
+action = jnp.array([0], dtype=jnp.int32)
+obs, state, log_reward, done, _ = env.step(state, action, env_params)
 ```
 
 

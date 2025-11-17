@@ -46,10 +46,9 @@ class ELBOMetricsModule(BaseMetricsModule):
     Attributes:
         env: Environment instance for trajectory generation and evaluation.
         env_params: Environment parameters.
-        fwd_policy_fn: Forward policy function for sampling trajectories.
+        fwd_policy_fn: Forward policy function producing action logits.
         n_rounds: Number of sampling rounds for statistical stability.
-        batch_size: The number of trajectories to sample in each batch.
-        logZ: The logarithm of the true normalizing constant, if tractable.
+        batch_size: Batch size used when evaluating policy over states.
     """
 
     def __init__(
@@ -64,7 +63,7 @@ class ELBOMetricsModule(BaseMetricsModule):
 
         Args:
             env: Environment for trajectory generation and reward computation.
-            env_params: Environment parameters.
+            env_params: Environment parameters used for trajectory generation.
             fwd_policy_fn: Forward policy function for generating trajectories.
             n_rounds: The number of sampling rounds to perform for estimation.
             batch_size: The number of environments to run in parallel for sampling.

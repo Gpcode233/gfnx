@@ -69,8 +69,8 @@ class ExactDistributionMetricsModule(BaseMetricsModule):
         - "2d_marginal_distribution": Marginal distribution computation
 
     Attributes:
-        metrics: List of metric names to compute
-        env: The enumerable environment for which to compute metrics
+        metrics: List of required metrics, choose from {"tv", "kl", "2d_marginal_distribution"}
+        env: Enumerable environment for which to compute metrics
         fwd_policy_fn: Forward policy function producing action logits
         batch_size: Batch size used when evaluating policy over states
         tol_epsilon: Tolerance for convergence in distribution computation
@@ -98,10 +98,11 @@ class ExactDistributionMetricsModule(BaseMetricsModule):
         for memory efficiency; it is unrelated to any replay buffer.
 
         Args:
-            metrics: List of metric names to compute. Must be a subset of supported metrics.
-            env: Enumerable environment (``env.is_enumerable`` must be True).
-            fwd_policy_fn: Function mapping observations to action logits.
-            batch_size: Mini-batch size for policy evaluation across states.
+            metrics: List of metric names to compute, 
+                choose from {"tv", "kl", "2d_marginal_distribution"}.
+            env: Enumerable environment for which to compute metrics.
+            fwd_policy_fn: Forward policy function for generating trajectories.
+            batch_size: Batch size used when evaluating policy over states.
 
         Raises:
             ValueError: If the environment is not enumerable or not topologically sortable,

@@ -54,11 +54,11 @@ The script is powered by Hydra, so you can override any configuration value on t
 
 ## License
 
-GFNX is released under the [MIT License](https://github.com/d-tiapkin/gfnx/blob/main/LICENCE). Feel free to use it in academic and commercial projects; please attribute the original authors when you publish results built on this codebase.
+`gfnx` is released under the [MIT License](https://github.com/d-tiapkin/gfnx/blob/main/LICENCE). Feel free to use it in academic and commercial projects; please attribute the original authors when you publish results built on this codebase.
 
 ## Influences
 
-GFNX stands on the shoulders of several excellent open-source projects:
+`gfnx` stands on the shoulders of several excellent open-source projects:
 
 - [torchgfn](https://torchgfn.readthedocs.io/en/latest/) – PyTorch-first GFlowNet library that shaped our environment design.
 - [CleanRL](https://github.com/vwxyzjn/cleanrl) – taught us the value of single-file baselines and reproducible experiment configs.

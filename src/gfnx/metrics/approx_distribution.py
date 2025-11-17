@@ -75,10 +75,10 @@ class ApproxDistributionMetricsModule(BaseMetricsModule):
         - "2d_marginal_distribution": Marginal distribution computation
 
     Attributes:
-        metrics: List of metric names to compute
-        env: The enumerable environment for which to compute metrics
-        buffer_module: Flashbax buffer module for storing environment states
-        _supported_metrics: Dictionary mapping metric names to computation functions
+        metrics: List of metric names to compute, 
+            choose from {"tv", "kl", "jsd", "2d_marginal_distribution"}.
+        env: Enumerable environment for which to compute metrics.
+        buffer_size: Maximum number of states to store in the replay buffer.
     """
 
     _supported_metrics = {
