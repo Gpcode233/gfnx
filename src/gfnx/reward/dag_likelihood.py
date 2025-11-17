@@ -5,13 +5,21 @@ import chex
 import jax.numpy as jnp
 from scipy.special import gammaln
 
-from ..base import TAction, TLogReward
+from ..base import TAction, TLogReward, TRewardParams
 from ..environment import DAGEnvParams, DAGEnvState
+from ..utils.dag import load_dag_samples
 
 
-@chex.dataclass
 class BaseDAGLikelihood:
-    data: chex.Array
+    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> TRewardParams:
+        """Initialize the likelihood. Default implementation returns None.
+
+        Args:
+        - rng_key: chex.PRNGKey, random key
+        - dummy_state: DAGEnvState, shape [1, ...], a dummy state
+
+        """
+        return None
 
     def log_prob(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
         """Computes the log-likelihood of the data given the state - graph G:
@@ -30,8 +38,9 @@ class BaseDAGLikelihood:
         adjacency_matrix = state.adjacency_matrix.transpose(0, 2, 1)
         parents = adjacency_matrix.reshape(-1, num_variables)
         variables = jnp.tile(jnp.arange(num_variables), num_graphs)
+        likelihood_params = env_params.reward_params.likelihood_params
 
-        local_scores = self._local_score(variables, parents)
+        local_scores = self._local_score(variables, parents, likelihood_params)
         local_scores = local_scores.reshape(num_graphs, num_variables)
         return jnp.sum(local_scores, axis=1)  # [B]
 
@@ -52,7 +61,7 @@ class BaseDAGLikelihood:
         - action: DAGEnvAction, shape [B], batch of actions
         - next_state: DAGEnvState, shape [B, ...], batch of next states
         - env_params: DAGEnvParams, params of environment,
-          always includes reward params
+            always includes reward params
 
         Returns:
         - TLogReward, shape [B], batch of delta-scores
@@ -61,18 +70,23 @@ class BaseDAGLikelihood:
         source, target = jnp.divmod(action, env_params.num_variables)
         parents = state.adjacency_matrix[arange, :, target]  # [B, num_variables]
         next_parents = next_state.adjacency_matrix[arange, :, target]  # [B, num_variables]
-        return self._local_score(target, next_parents) - self._local_score(target, parents)
+        likelihood_params = env_params.reward_params.likelihood_params
+        return self._local_score(target, next_parents, likelihood_params) - self._local_score(
+            target, parents, likelihood_params
+        )
 
     def _local_score(
         self,
         variables: chex.Array,
         parents: chex.Array,
+        likelihood_params: TRewardParams,
     ) -> TLogReward:
         """Computes the local score LocalScore(X_j | Pa_G(X_j)).
 
         Args:
         - variables: chex.Array, shape [B], batch of variables
         - parents: chex.Array, shape [B, num_variables], batched mask of parents
+        - likelihood_params: TRewardParams, params of likelihood
 
         Returns:
         - TLogReward, shape [B], batch of local scores
@@ -90,29 +104,47 @@ class ZeroScore(BaseDAGLikelihood):
     ) -> TLogReward:
         return jnp.zeros(state.time.shape[0])  # [B]
 
-    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
+    def _local_score(
+        self, variables: chex.Array, parents: chex.Array, likelihood_params: TRewardParams
+    ) -> TLogReward:
         return jnp.zeros(variables.shape[0])  # [B]
 
 
 class LinearGaussianScore(BaseDAGLikelihood):
     def __init__(
         self,
-        data: chex.Array,
+        data_path: str,
         prior_mean: float = 0.0,
         prior_scale: float = 1.0,
         obs_scale: float = math.sqrt(0.1),
     ):
-        super().__init__(data=data)
+        self.data_path = data_path
         self.prior_mean = prior_mean
         self.prior_scale = prior_scale
         self.obs_scale = obs_scale
 
-    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
-        num_samples, num_variables = self.data.shape
-        masked_data = self.data * parents[:, jnp.newaxis]
+    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> TRewardParams:
+        """
+        Initialize the likelihood.
+        Args:
+        - rng_key: chex.PRNGKey, random key
+        - dummy_state: DAGEnvState, shape [1, ...], a dummy state
+
+         Returns:
+        - Loaded samples as a dictionary with key "data"
+        """
+        data = load_dag_samples(self.data_path)
+        return {"data": data}
+
+    def _local_score(
+        self, variables: chex.Array, parents: chex.Array, likelihood_params: TRewardParams
+    ) -> TLogReward:
+        data = likelihood_params["data"]
+        num_samples, num_variables = data.shape
+        masked_data = data * parents[:, jnp.newaxis]
 
         means = self.prior_mean * jnp.sum(masked_data, axis=2)
-        diffs = (self.data[:, variables].T - means) / self.obs_scale
+        diffs = (data[:, variables].T - means) / self.obs_scale
         y_matrix = self.prior_scale * jnp.matmul(diffs[:, None], masked_data)
         y = jnp.squeeze(y_matrix, axis=1)
         sigma_matrix = (self.obs_scale**2) * jnp.eye(num_variables) + (
@@ -135,8 +167,7 @@ class BGeScore(BaseDAGLikelihood):
         alpha_mu: float = 1.0,
         alpha_w: Optional[float] = None,
     ):
-        super().__init__(data=data)
-        self.num_samples, self.num_variables = self.data.shape
+        self.num_samples, self.num_variables = data.shape
         if mean_obs is None:
             mean_obs = jnp.zeros((self.num_variables,))
         if alpha_w is None:
@@ -169,7 +200,9 @@ class BGeScore(BaseDAGLikelihood):
             + 0.5 * (self.alpha_w - self.num_variables + 2 * all_parents + 1) * jnp.log(self.t)
         )
 
-    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
+    def _local_score(
+        self, variables: chex.Array, parents: chex.Array, likelihood_params: TRewardParams
+    ) -> TLogReward:
         def _logdet(array: chex.Array, mask: chex.Array) -> chex.Array:
             mask = mask[:, None, :] * mask[:, :, None]
             array = mask * array + (1.0 - mask) * jnp.eye(self.num_variables)

@@ -1,13 +1,19 @@
 import chex
 import jax.numpy as jnp
 
-from ..base import TAction, TLogReward
+from ..base import TAction, TLogReward, TRewardParams
 from ..environment import DAGEnvParams, DAGEnvState
 
 
-@chex.dataclass
 class BaseDAGPrior:
-    num_variables: int
+    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> TRewardParams:
+        """Initialize the prior. Default implementation returns None.
+
+        Args:
+        - rng_key: chex.PRNGKey, random key
+        - dummy_state: DAGEnvState, shape [1, ...], a dummy state
+        """
+        return None
 
     def log_prob(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
         """Computes log P(G).
@@ -51,7 +57,6 @@ class BaseDAGPrior:
 
 class UniformDAGPrior(BaseDAGPrior):
     def __init__(self, num_variables: int) -> None:
-        super().__init__(num_variables=num_variables)
         # We can assign an arbitrary constant here,
         # since we only need an unnormalized score in GFlowNets
         self._log_prior = jnp.zeros(num_variables)

@@ -476,7 +476,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         {
             "mean_loss": mean_loss,
             "entropy": log_info["entropy"].mean(),
-            "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "grad_norm": optax.tree_utils.tree_norm(grads, ord=2),
             "mean_reward": jnp.exp(log_info["log_gfn_reward"]).mean(),
             "mean_log_reward": log_info["log_gfn_reward"].mean(),
             "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
@@ -506,24 +506,25 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Load the samples
     train_samples = gfnx.utils.load_dag_samples(cfg.environment.train_samples_path)
+    num_variables = train_samples.shape[1]
     # Define the reward function for the environment
     if cfg.environment.prior.type == "uniform":
         prior = gfnx.reward.UniformDAGPrior(
-            num_variables=train_samples["num_variables"],
+            num_variables=num_variables,
         )
     else:
         raise ValueError(f"Unknown prior type: {cfg.environment.prior.type}")
 
     if cfg.environment.likelihood.type == "linear_gaussian_score":
         likelihood = gfnx.reward.LinearGaussianScore(
-            data=train_samples["samples"],
+            data_path=cfg.environment.train_samples_path,
             prior_mean=cfg.environment.likelihood.prior_mean,
             prior_scale=cfg.environment.likelihood.prior_scale,
             obs_scale=cfg.environment.likelihood.obs_scale,
         )
     elif cfg.environment.likelihood.type == "bge_score":
         likelihood = gfnx.reward.BGeScore(
-            data=train_samples["samples"],
+            data=train_samples,
             mean_obs=cfg.environment.likelihood.mean_obs,
             alpha_mu=cfg.environment.likelihood.alpha_mu,
             alpha_w=cfg.environment.likelihood.alpha_w,
@@ -535,14 +536,14 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the environment and its inner parameters
     env = gfnx.environment.DAGEnvironment(
         reward_module,
-        num_variables=train_samples["num_variables"],
+        num_variables=num_variables,
     )
     env_params = env.init(env_init_key)
 
     rng_key, net_init_key = jax.random.split(rng_key)
     # Initialize the network
     model = GNNPolicy(
-        num_nodes=train_samples["num_variables"],
+        num_nodes=num_variables,
         num_layers=cfg.network.num_layers,
         mlp_num_layers=cfg.network.mlp_num_layers,
         emb_size=cfg.network.embedding_size,

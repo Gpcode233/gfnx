@@ -12,6 +12,7 @@ from gfnx.base import (
     TAction,
     TDone,
     TRewardModule,
+    TRewardParams,
 )
 
 from .. import spaces
@@ -31,7 +32,7 @@ class EnvState(BaseEnvState):
 @chex.dataclass(frozen=True)
 class EnvParams(BaseEnvParams):
     num_variables: int = 4
-    reward_params: Any = None
+    reward_params: TRewardParams
 
 
 class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):

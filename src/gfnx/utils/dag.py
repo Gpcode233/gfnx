@@ -5,7 +5,7 @@ import pickle
 import string
 from itertools import chain, count, islice, permutations, product
 from pathlib import Path
-from typing import Any, Dict, Tuple
+from typing import Tuple
 
 import chex
 import jax
@@ -14,7 +14,7 @@ import networkx as nx
 import numpy as np
 
 
-def load_dag_samples(samples_path: Path) -> Dict[str, Any]:
+def load_dag_samples(samples_path: Path) -> chex.Array:
     """
     Loads samples and extracts basic information needed for DAG environment setup.
 
@@ -22,17 +22,15 @@ def load_dag_samples(samples_path: Path) -> Dict[str, Any]:
         samples_path: Path to the file containing the samples.
 
     Returns:
-        Dictionary with initialization arguments:
-        - samples: The loaded samples array
-        - num_variables: Number of variables in the samples
+        The loaded samples array
     """
     with open(samples_path, "r") as f:
         reader = csv.reader(f)
         rows = list(reader)
 
-    data = jnp.array(rows[1:], dtype=jnp.float32)
-
-    return {"samples": data, "num_variables": data.shape[1]}
+    # Skip the header row
+    samples = jnp.array(rows[1:], dtype=jnp.float32)
+    return samples
 
 
 def uint8bits_to_int32(bits: chex.Array) -> chex.Array:
