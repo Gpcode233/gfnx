@@ -1,5 +1,6 @@
-from .transformer import Encoder
+from .transformer import Encoder, TransformerLayer
 
 __all__ = [
-    "Encoder"
+    "Encoder",
+    "TransformerLayer",
 ]

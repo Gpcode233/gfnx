@@ -5,6 +5,10 @@ from .bitseq import (
     BitseqNumModesState,
 )
 from .hypergrid import HypergridMetricModule, HypergridMetricState
+from .phylogenetic_tree import (
+    PhyloTreeCorrelationMetric,
+    PhyloTreeCorrelationState,
+)
 
 __all__ = [
     "BitseqCorrelationMetric",
@@ -13,4 +17,6 @@ __all__ = [
     "BitseqNumModesState",
     "HypergridMetricState",
     "HypergridMetricModule",
+    "PhyloTreeCorrelationMetric",
+    "PhyloTreeCorrelationState",
 ]

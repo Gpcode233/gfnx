@@ -25,12 +25,16 @@ from .environment import (
     HypergridEnvironment,
     HypergridEnvParams,
     HypergridEnvState,
+    PhyloTreeEnvironment,
+    PhyloTreeEnvParams,
+    PhyloTreeEnvState,
 )
 from .reward import (
     BitseqRewardModule,
     EasyHypergridRewardModule,
     GeneralHypergridRewardModule,
     HardHypergridRewardModule,
+    PhyloTreeRewardModule,
     ProxyAMPRewardModule,
     ProxyGFPRewardModule,
 )
@@ -69,4 +73,8 @@ __all__ = [
     "TReward",
     "TRewardModule",
     "TRewardParams",
+    PhyloTreeEnvironment,
+    PhyloTreeEnvParams,
+    PhyloTreeEnvState,
+    PhyloTreeRewardModule,
 ]

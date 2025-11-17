@@ -656,3 +656,4 @@ class PrependAppendSequenceEnvironment(SequenceEnvironment):
         """Backward action space of the environment,
         only about removing the last character."""
         return spaces.Discrete(2)
+        return spaces.Discrete(2)
