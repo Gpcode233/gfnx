@@ -15,7 +15,6 @@ dependencies = [
   "chex",
   "flashbax",
   "numpy==1.26.4",
-  "jax_tqdm",
   "jaxtyping",
   "networkx",
   "omegaconf",

@@ -1,21 +1,21 @@
 # Reward API Reference
 
-# AMP reward
-
-::: gfnx.reward.amp
-
-# Bitseq reward
+# Bit Sequence reward
 
 ::: gfnx.reward.bitseq
-
-# GFP reward
-
-::: gfnx.reward.gfp
 
 # TFBind-8 reward
 
 ::: gfnx.reward.tfbind
 
-# QM9 reward
+# QM9 Small reward
 
 ::: gfnx.reward.qm9_small
+
+# AMP reward
+
+::: gfnx.reward.amp
+
+# GFP reward
+
+::: gfnx.reward.gfp

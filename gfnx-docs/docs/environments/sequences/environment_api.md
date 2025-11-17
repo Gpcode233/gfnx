@@ -4,22 +4,22 @@
 
 ::: gfnx.environment.sequence
 
-## AMP Environment
-
-::: gfnx.environment.amp
-
-## Bitseq Environment
+## Bit Sequence environment
 
 ::: gfnx.environment.bitseq
 
-## GFP Environment
-
-::: gfnx.environment.gfp
-
-## TFBind-8 Environment
+## TFBind-8 environment
 
 ::: gfnx.environment.tfbind
 
-## QM9 Environment
+## QM9 Small environment
 
 ::: gfnx.environment.qm9_small
+
+## AMP environment
+
+::: gfnx.environment.amp
+
+## GFP environment
+
+::: gfnx.environment.gfp

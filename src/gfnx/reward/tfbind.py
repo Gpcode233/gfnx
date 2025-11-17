@@ -1,6 +1,4 @@
 """Reward functions used for TFBind-8 environment.
-
-pip install git+https://github.com/brandontrabucco/design-bench.git@chris/fixes-v2
 """
 
 import itertools
