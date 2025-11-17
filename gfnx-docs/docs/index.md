@@ -1,0 +1,3 @@
+# `gfnx` API reference
+::: gfnx
+

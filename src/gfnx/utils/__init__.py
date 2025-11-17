@@ -1,18 +1,13 @@
-from .bitseq import (
-    construct_binary_test_set,
-    construct_mode_set,
-    detokenize,
-    mode_set_distance,
-    tokenize,
-)
+from . import bitseq
 from .corr import spearmanr
+from .dag import load_dag_samples
+from .distances import kl_divergence, total_variation_distance
 from .exploration import (
     ExplorationState,
     apply_epsilon_greedy,
     apply_epsilon_greedy_vmap,
     create_exploration_schedule,
 )
-from .dag import load_dag_samples
 from .masking import mask_logits
 from .phylogenetic_tree import get_phylo_initialization_args
 from .proteins import (
@@ -30,32 +25,36 @@ from .rollout import (
     TrajectoryData,
     TransitionData,
     backward_rollout,
+    backward_trajectory_log_ratio,
     forward_rollout,
+    forward_trajectory_log_ratio,
     split_traj_to_transitions,
 )
 
 __all__ = [
+    "bitseq",
     "AMINO_ACIDS",
+    "ExplorationState",
     "NUCLEOTIDES",
     "NUCLEOTIDES_FULL_ALPHABET",
     "PROTEINS_FULL_ALPHABET",
     "SPECIAL_TOKENS",
+    "TrajectoryData",
+    "TransitionData",
     "apply_epsilon_greedy",
     "apply_epsilon_greedy_vmap",
     "backward_rollout",
-    "construct_binary_test_set",
-    "construct_mode_set",
+    "backward_trajectory_log_ratio",
     "create_exploration_schedule",
-    "get_phylo_initialization_args",
-    "detokenize",
     "forward_rollout",
+    "forward_trajectory_log_ratio",
+    "get_phylo_initialization_args",
+    "kl_divergence",
     "load_dag_samples",
     "mask_logits",
-    "mode_set_distance",
     "spearmanr",
     "split_traj_to_transitions",
-    "tokenize",
-    "TrajectoryData",
-    "TransitionData",
-    "ExplorationState",
+    "total_variation_distance",
+    "QM9_SMALL_BLOCKS",
+    "QM9_SMALL_FULL_ALPHABET",
 ]

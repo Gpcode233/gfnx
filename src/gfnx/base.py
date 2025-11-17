@@ -1,6 +1,7 @@
 """Abstract base class for all gfnx Environments"""
 # TODO: add credits to gymnax
 
+from abc import ABC, abstractmethod
 from typing import Any, Dict, Generic, Tuple, TypeVar
 
 import chex
@@ -36,7 +37,7 @@ class BaseEnvParams:
     reward_params: TRewardParams
 
 
-class BaseRewardModule(Generic[TEnvState, TEnvParams]):
+class BaseRewardModule(ABC, Generic[TEnvState, TEnvParams]):
     """
     Base class for reward and log reward implementations.
 
@@ -51,9 +52,8 @@ class BaseRewardModule(Generic[TEnvState, TEnvParams]):
           parameters.
     """
 
-    def init(
-        self, rng_key: chex.PRNGKey, dummy_state: TEnvState
-    ) -> TRewardParams:
+    @abstractmethod
+    def init(self, rng_key: chex.PRNGKey, dummy_state: TEnvState) -> TRewardParams:
         """
         Initialize reward module, returns TRewardParams.
         Args:
@@ -62,9 +62,8 @@ class BaseRewardModule(Generic[TEnvState, TEnvParams]):
         """
         raise NotImplementedError
 
-    def log_reward(
-        self, state: TEnvState, env_params: TEnvParams
-    ) -> Float[Array, " batch_size"]:
+    @abstractmethod
+    def log_reward(self, state: TEnvState, env_params: TEnvParams) -> Float[Array, " batch_size"]:
         """
         Compute the log reward given the state and environment parameters.
         Args:
@@ -76,9 +75,8 @@ class BaseRewardModule(Generic[TEnvState, TEnvParams]):
         """
         raise NotImplementedError
 
-    def reward(
-        self, state: TEnvState, env_params: TEnvParams
-    ) -> Float[Array, " batch_size"]:
+    @abstractmethod
+    def reward(self, state: TEnvState, env_params: TEnvParams) -> Float[Array, " batch_size"]:
         """
         Log reward function, returns TReward
         Args:
@@ -91,7 +89,7 @@ class BaseRewardModule(Generic[TEnvState, TEnvParams]):
         raise NotImplementedError
 
 
-class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
+class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
     """
     Jittable abstract base class for all gfnx Environments.
     Note: all environments are vectorized by default.
@@ -103,10 +101,12 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
     def __init__(self, reward_module: TRewardModule):
         self.reward_module = reward_module
 
+    @abstractmethod
     def get_init_state(self, num_envs: int) -> TEnvState:
         """Returns batch of initial states of the environment."""
         raise NotImplementedError
 
+    @abstractmethod
     def init(self, rng_key: chex.PRNGKey) -> TEnvParams:
         """
         Init params of the environment and reward module.
@@ -114,6 +114,7 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         raise NotImplementedError
 
     @property
+    @abstractmethod
     def max_steps_in_episode(self) -> int:
         raise NotImplementedError
 
@@ -135,9 +136,7 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
             next_state,  # Args for log_reward
             env_params,  # Args for log_reward
         )
-        log_reward = jnp.where(
-            new_dones, log_reward, jnp.zeros_like(log_reward)
-        )
+        log_reward = jnp.where(new_dones, log_reward, jnp.zeros_like(log_reward))
         return (
             self.get_obs(next_state, env_params),
             next_state,
@@ -156,17 +155,13 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         Performs batched backward step transitions in the environment.
         Important: `done` is true if the state is the initial one.
         """
-        state, done, info = self.backward_transition(
-            state, backward_action, env_params
-        )
+        state, done, info = self.backward_transition(state, backward_action, env_params)
         done = jnp.astype(done, jnp.bool)  # Ensure that done is boolean
         # log reward is always zero for backward steps
         log_rewards = jnp.zeros(state.time.shape, dtype=jnp.float32)
         return self.get_obs(state, env_params), state, log_rewards, done, info
 
-    def reset(
-        self, num_envs: int, env_params: TEnvParams
-    ) -> Tuple[TObs, TEnvState]:
+    def reset(self, num_envs: int, env_params: TEnvParams) -> Tuple[TObs, TEnvState]:
         """Performs batched resetting of environment."""
         state = self.get_init_state(num_envs)
         return self.get_obs(state, env_params), state
@@ -175,9 +170,9 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         self, state: TEnvState, action: TAction, env_params: TEnvParams
     ) -> Tuple[TEnvState, TDone, Dict[Any, Any]]:
         """Environment-specific step transition."""
-        next_state, done, info = jax.vmap(
-            self._single_transition, in_axes=(0, 0, None)
-        )(state, action, env_params)
+        next_state, done, info = jax.vmap(self._single_transition, in_axes=(0, 0, None))(
+            state, action, env_params
+        )
         return next_state, done, info
 
     def backward_transition(
@@ -187,17 +182,19 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         env_params: TEnvParams,
     ) -> Tuple[TEnvState, TDone, Dict[Any, Any]]:
         """Environment-specific step backward transition."""
-        prev_state, done, info = jax.vmap(
-            self._single_backward_transition, in_axes=(0, 0, None)
-        )(state, backward_action, env_params)
+        prev_state, done, info = jax.vmap(self._single_backward_transition, in_axes=(0, 0, None))(
+            state, backward_action, env_params
+        )
         return prev_state, done, info
 
+    @abstractmethod
     def _single_transition(
         self, state: TEnvState, action: TAction, env_params: TEnvParams
     ) -> Tuple[TEnvState, TDone, Dict[Any, Any]]:
         """Environment-specific step transition. NOTE: this is not batched!"""
         raise NotImplementedError
 
+    @abstractmethod
     def _single_backward_transition(
         self,
         state: TEnvState,
@@ -210,12 +207,12 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         """
         raise NotImplementedError
 
-    def get_obs(
-        self, state: TEnvState, env_params: TEnvParams
-    ) -> chex.ArrayTree:
+    @abstractmethod
+    def get_obs(self, state: TEnvState, env_params: TEnvParams) -> chex.ArrayTree:
         """Applies observation function to state. Should be batched."""
         raise NotImplementedError
 
+    @abstractmethod
     def get_backward_action(
         self,
         state: TEnvState,
@@ -229,6 +226,7 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def get_forward_action(
         self,
         state: TEnvState,
@@ -242,12 +240,14 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         """
         raise NotImplementedError
 
+    @abstractmethod
     def get_invalid_mask(
         self, state: TEnvState, env_params: TEnvParams
     ) -> Bool[Array, " batch_size"]:
         """Returns mask of invalid actions. Should be batched"""
         raise NotImplementedError
 
+    @abstractmethod
     def get_invalid_backward_mask(
         self, state: TEnvState, env_params: TEnvParams
     ) -> Bool[Array, " batch_size"]:
@@ -276,33 +276,119 @@ class BaseVecEnvironment(Generic[TEnvState, TEnvParams]):
         """
         batch_size = policy_probs.shape[0]
         return jax.vmap(
-            lambda key, p: jax.random.choice(
-                key, self.backward_action_space.n, p=p
-            ),
+            lambda key, p: jax.random.choice(key, self.backward_action_space.n, p=p),
             in_axes=(0, 0),
         )(jax.random.split(rng_key, batch_size), policy_probs)
 
     @property
+    @abstractmethod
     def name(self) -> str:
         """Environment name."""
         return type(self).__name__
 
     @property
+    @abstractmethod
     def action_space(self):
         """Action space of the environment."""
         raise NotImplementedError
 
     @property
+    @abstractmethod
     def backward_action_space(self):
         """Action space of the environment."""
         raise NotImplementedError
 
     @property
+    @abstractmethod
     def observation_space(self):
         """Observation space of the environment."""
         raise NotImplementedError
 
     @property
+    @abstractmethod
     def state_space(self):
         """State space of the environment."""
+        raise NotImplementedError
+
+    @property
+    def is_enumerable(self) -> bool:
+        """Whether this environment supports enumerable operations."""
+        return False
+
+    # Additional methods for enumerable environments
+    def get_true_distribution(self, env_params: TEnvParams) -> chex.Array:
+        """
+        Returns the true distribution of rewards for all states if the
+        environment is enumerable.
+        Args:
+            env_params: TEnvParams, params of environment
+        Returns:
+            chex.Array, true distribution of rewards for all states
+        """
+        if not self.is_enumerable:
+            raise ValueError(f"Environment {self.name} is not enumerable")
+        raise NotImplementedError
+
+    def get_empirical_distribution(self, states: TEnvState, env_params: TEnvParams) -> chex.Array:
+        """
+        Extracts the empirical distribution from the given states if the
+        environment is enumerable.
+        Args:
+            states: TEnvState, shape [B, ...], batch of states
+            env_params: TEnvParams, params of environment
+        Returns:
+            chex.Array, empirical distribution of rewards for all states
+        """
+        if not self.is_enumerable:
+            raise ValueError(f"Environment {self.name} is not enumerable")
+        raise NotImplementedError
+
+    @property
+    def is_mean_reward_tractable(self) -> bool:
+        """Whether this environment supports mean reward tractability."""
+        return False
+
+    def get_mean_reward(self, env_params: TEnvParams) -> float:
+        """
+        Returns the mean reward over the true distribution.
+        Args:
+            env_params: TEnvParams, params of environment
+        Returns:
+           float, mean reward over the true distribution
+        """
+        if not self.is_mean_reward_tractable:
+            raise ValueError(f"Mean reward for environment {self.name} is not tractable")
+        raise NotImplementedError
+
+    @property
+    def is_normalizing_constant_tractable(self) -> bool:
+        """Whether this environment supports tractable normalizing constant."""
+        return False
+
+    def get_normalizing_constant(self, env_params: TEnvParams) -> float:
+        """
+        Returns the normalizing constant for the hypergrid environment.
+        The normalizing constant is computed as the sum of rewards.
+        """
+        if not self.is_normalizing_constant_tractable:
+            raise ValueError(f"Normalizing constant for environment {self.name} is not tractable")
+        raise NotImplementedError
+
+    @property
+    def is_ground_truth_sampling_tractable(self) -> bool:
+        """Whether this environment supports tractable sampling from the GT distribution."""
+        return False
+
+    def get_ground_truth_sampling(self, batch_size: int, env_params: TEnvParams) -> TEnvState:
+        """
+        Returns the ground truth sampling for the hypergrid environment.
+        The ground truth sampling is computed as the sum of rewards.
+        Args:
+            batch_size: int, number of samples to generate
+            env_params: TEnvParams, params of environment
+        Returns:
+            TEnvState, shape [batch_size, ...], batch of ground truth sampled states
+        """
+        if not self.is_ground_truth_sampling_tractable:
+            raise ValueError(f"GT sampling for environment {self.name} is not tractable")
         raise NotImplementedError

@@ -30,7 +30,6 @@ def load_dag_samples(samples_path: Path) -> Dict[str, Any]:
         reader = csv.reader(f)
         rows = list(reader)
 
-    header = rows[0]
     data = jnp.array(rows[1:], dtype=jnp.float32)
 
     return {"samples": data, "num_variables": data.shape[1]}
@@ -66,9 +65,7 @@ def construct_all_dags(num_variables):
 
     compressed_dags = sorted(list(compressed_dags))
     compressed_dags = np.array(compressed_dags)
-    adjacencies = np.unpackbits(
-        compressed_dags, axis=1, count=num_variables**2
-    )
+    adjacencies = np.unpackbits(compressed_dags, axis=1, count=num_variables**2)
     return jnp.array(adjacencies.reshape(-1, num_variables, num_variables))
 
 
@@ -108,9 +105,7 @@ def get_markov_blanket(adjacency_matrix: chex.Array) -> chex.Array:
         """
         parents = adjacency_matrix[:, i]
         children = adjacency_matrix[i, :]
-        spouses = jnp.sum(adjacency_matrix * children[None,], axis=1).astype(
-            jnp.bool
-        )
+        spouses = jnp.sum(adjacency_matrix * children[None,], axis=1).astype(jnp.bool)
         blanket = parents | children | spouses
         return blanket
 
@@ -140,12 +135,8 @@ def sample_erdos_renyi_graph(
 
     if nodes is None:
         uppercase = string.ascii_uppercase
-        iterator = chain.from_iterable(
-            product(uppercase, repeat=r) for r in count(1)
-        )
-        nodes = [
-            "".join(letters) for letters in islice(iterator, num_variables)
-        ]
+        iterator = chain.from_iterable(product(uppercase, repeat=r) for r in count(1))
+        nodes = ["".join(letters) for letters in islice(iterator, num_variables)]
 
     adjacency = rng.binomial(1, p=p, size=(num_variables, num_variables))
     adjacency = np.tril(adjacency, k=-1)  # Only keep the lower triangular part
@@ -189,9 +180,7 @@ def sample_from_linear_gaussian(graph, num_samples, rng=None):
         rng = np.random.default_rng()
 
     if graph.graph.get("type", "") != "linear-gaussian":
-        raise ValueError(
-            "The graph is not a Linear Gaussian Bayesian Network."
-        )
+        raise ValueError("The graph is not a Linear Gaussian Bayesian Network.")
 
     nodes = list(nx.topological_sort(graph))
     node_index = {node: idx for idx, node in enumerate(nodes)}
@@ -201,16 +190,12 @@ def sample_from_linear_gaussian(graph, num_samples, rng=None):
         idx = node_index[node]
         attrs = graph.nodes[node]
         if attrs["parents"]:
-            parent_indices = [
-                node_index[parent] for parent in attrs["parents"]
-            ]
+            parent_indices = [node_index[parent] for parent in attrs["parents"]]
             values = samples[:, parent_indices]
             mean = attrs["bias"] + np.dot(values, attrs["cpd"])
             samples[:, idx] = rng.normal(mean, attrs["obs_scale"])
         else:
-            samples[:, idx] = rng.normal(
-                attrs["bias"], attrs["obs_scale"], size=(num_samples,)
-            )
+            samples[:, idx] = rng.normal(attrs["bias"], attrs["obs_scale"], size=(num_samples,))
     return nodes, samples
 
 

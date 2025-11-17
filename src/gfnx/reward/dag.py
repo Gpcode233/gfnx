@@ -18,12 +18,8 @@ class DAGRewardModule(BaseRewardModule[DAGEnvState, DAGEnvParams]):
     def reward(self, state: DAGEnvState, env_params: DAGEnvParams) -> TReward:
         return jnp.exp(self.log_reward(state, env_params))
 
-    def log_reward(
-        self, state: DAGEnvState, env_params: DAGEnvParams
-    ) -> TLogReward:
-        return self.likelihood.log_prob(
-            state, env_params
-        ) + self.prior.log_prob(state, env_params)
+    def log_reward(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
+        return self.likelihood.log_prob(state, env_params) + self.prior.log_prob(state, env_params)
 
     def delta_score(
         self,

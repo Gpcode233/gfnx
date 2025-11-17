@@ -2,7 +2,7 @@
 
 Run the script with the following command:
 ```bash
-python baselines/db_phylo.py
+python baselines/fldb_phylo.py
 ```
 
 Also see https://jax.readthedocs.io/en/latest/gpu_performance_tips.html for
@@ -22,12 +22,17 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
-import wandb
 from jax_tqdm import loop_tqdm
 from omegaconf import OmegaConf
 
 import gfnx
+import wandb
 from gfnx.environment.phylogenetic_tree import PhyloTreeEnvironment
+from gfnx.metrics.new import (
+    MultiMetricsModule,
+    MultiMetricsState,
+    OnPolicyCorrelationMetricsModule,
+)
 from gfnx.reward.phylogenetic_tree import PhyloTreeRewardModule
 from gfnx.utils import (
     ExplorationState,
@@ -88,9 +93,7 @@ class TransformerPolicy(eqx.Module):
             backward_mlp_key,
         ) = jax.random.split(key, num=6)
         initializer = jax.nn.initializers.truncated_normal(stddev=0.02)
-        self.pos_embeddings = initializer(
-            pos_emb_key, (num_nodes, emb_params["embedding_size"])
-        )
+        self.pos_embeddings = initializer(pos_emb_key, (num_nodes, emb_params["embedding_size"]))
         self.train_backward_policy = train_backward_policy
         self.n_fwd_actions = n_fwd_actions
         self.n_bwd_actions = n_bwd_actions
@@ -109,9 +112,7 @@ class TransformerPolicy(eqx.Module):
             key=emb_key,
         )
 
-        layer_keys = jax.random.split(
-            transformer_key, num=transformer_params["num_layers"]
-        )
+        layer_keys = jax.random.split(transformer_key, num=transformer_params["num_layers"])
         self.layers = []
         for layer_key in layer_keys:
             self.layers.append(
@@ -120,9 +121,7 @@ class TransformerPolicy(eqx.Module):
                     intermediate_size=transformer_params["intermediate_size"],
                     num_heads=transformer_params["num_heads"],
                     dropout_rate=transformer_params["dropout_rate"],
-                    attention_dropout_rate=transformer_params[
-                        "attention_dropout_rate"
-                    ],
+                    attention_dropout_rate=transformer_params["attention_dropout_rate"],
                     key=layer_key,
                 )
             )
@@ -172,31 +171,25 @@ class TransformerPolicy(eqx.Module):
         )  # [num_nodes, embedding_size]
         input_embeddings = token_embeddings + self.pos_embeddings
 
-        x = jax.vmap(self.emb2hidden, in_axes=(0,))(
-            input_embeddings
-        )  # [num_nodes, hidden_size]
+        x = jax.vmap(self.emb2hidden, in_axes=(0,))(input_embeddings)  # [num_nodes, hidden_size]
         l_key = key
         for layer in self.layers:
-            cl_key, l_key = (
-                (None, None) if l_key is None else jax.random.split(l_key)
-            )
+            cl_key, l_key = (None, None) if l_key is None else jax.random.split(l_key)
             x = layer(
                 x, mask, enable_dropout=enable_dropout, key=cl_key
             )  # [num_nodes, hidden_size]
 
-        encodings_combination = (
-            x[self.row] + x[self.col]
-        )  # [2 * num_nodes - 1, hidden_size]
+        encodings_combination = x[self.row] + x[self.col]  # [2 * num_nodes - 1, hidden_size]
         # Tree topology MLP
-        forward_logits = jax.vmap(self.forward_mlp, in_axes=(0,))(
-            encodings_combination
-        ).squeeze(-1)  # [2 * num_nodes - 1]
+        forward_logits = jax.vmap(self.forward_mlp, in_axes=(0,))(encodings_combination).squeeze(
+            -1
+        )  # [2 * num_nodes - 1]
         flow = self.flow_mlp(jnp.hstack(x)).squeeze(-1)
 
         if self.train_backward_policy:
-            backward_logits = jax.vmap(self.backward_mlp, in_axes=(0,))(
-                x[:-1]
-            ).squeeze(-1)  # [num_nodes - 1]
+            backward_logits = jax.vmap(self.backward_mlp, in_axes=(0,))(x[:-1]).squeeze(
+                -1
+            )  # [num_nodes - 1]
         else:
             backward_logits = jnp.zeros(
                 shape=(self.n_bwd_actions,), dtype=jnp.float32
@@ -216,14 +209,12 @@ class TrainState(NamedTuple):
     env: gfnx.PhyloTreeEnvironment
     env_params: chex.Array
     model: TransformerPolicy
-    target_model: (
-        TransformerPolicy  # New: target network copy used for bootstrapping
-    )
+    target_model: TransformerPolicy  # New: target network copy used for bootstrapping
     optimizer: optax.GradientTransformation
     opt_state: optax.OptState
     exploration_state: ExplorationState
-    metrics_module: dict
-    metrics: dict
+    metrics_module: MultiMetricsModule
+    metrics_state: MultiMetricsState
     learning_rate_schedule: optax.Schedule
 
 
@@ -234,9 +225,7 @@ def get_policy_fn(
     use_exploration: bool = False,
     exploration_state: ExplorationState = None,
 ):
-    def policy_fn(
-        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params
-    ) -> chex.Array:
+    def policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         dropout_key, eps_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(
@@ -265,9 +254,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 1. Generate a batch of trajectories and split to transitions
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     fwd_policy_fn = get_policy_fn(
@@ -294,9 +281,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         transitions.next_state,
         train_state.env_params,
     )
-    delta_score = train_state.env.reward_module.delta_score(
-        transitions.next_state
-    )
+    delta_score = train_state.env.reward_module.delta_score(transitions.next_state)
 
     # Step 2. Compute the loss
     def loss_fn(model: TransformerPolicy) -> chex.Array:
@@ -319,12 +304,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             transitions.next_obs
         )
         bwd_logits = next_policy_outputs["backward_logits"]
-        next_bwd_invalid_mask = env.get_invalid_backward_mask(
-            transitions.next_state, env_params
-        )
-        masked_bwd_logits = gfnx.utils.mask_logits(
-            bwd_logits, next_bwd_invalid_mask
-        )
+        next_bwd_invalid_mask = env.get_invalid_backward_mask(transitions.next_state, env_params)
+        masked_bwd_logits = gfnx.utils.mask_logits(bwd_logits, next_bwd_invalid_mask)
         bwd_all_log_probs = jax.nn.log_softmax(masked_bwd_logits, axis=-1)
         bwd_logprobs = jnp.take_along_axis(
             bwd_all_log_probs, jnp.expand_dims(bwd_actions, axis=-1), axis=-1
@@ -332,9 +313,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         next_log_flow = next_policy_outputs["log_flow"]
         # In forward-looking DB, the flow is zero for the terminal state
         next_log_flow = jnp.where(transitions.done, 0.0, next_log_flow)
-        target = jax.lax.stop_gradient(
-            bwd_logprobs + next_log_flow + delta_score
-        )
+        target = jax.lax.stop_gradient(bwd_logprobs + next_log_flow + delta_score)
         loss = optax.huber_loss(
             jnp.where(transitions.pad, 0.0, fwd_logprobs + log_flow),
             jnp.where(transitions.pad, 0.0, target),
@@ -370,45 +349,52 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
     exploration_state = train_state.exploration_state.replace(step=idx + 1)
 
-    metric_state = {
-        key: module.update(
-            train_state.metrics[key], log_info["final_env_state"], env_params
-        )
-        for key, module in train_state.metrics_module.items()
-    }
-
-    # Compute the evaluation info if needed
-    def evaluation(args):
-        rng_key, metric_states, policy_params, env_params = args
-        corr_dict = train_state.metrics_module["corr"].compute(
-            rng_key, metric_states["corr"], policy_params, env_params
-        )
-        return corr_dict
-
-    rng_key, eval_rng_key = jax.random.split(rng_key)
-    eval_info = jax.lax.cond(
-        (idx % train_state.config.logging.track_each == 0)
-        | (idx + 1 == train_state.config.num_train_steps),
-        evaluation,
-        lambda _: {
-            "pearson_corr": 0.0,
-        },
-        (eval_rng_key, metric_state, policy_params, env_params),
+    metrics_state = train_state.metrics_module.update(
+        train_state.metrics_state,
+        rng_key=jax.random.key(0),  # not used, but required by the API
+        args=train_state.metrics_module.UpdateArgs(
+            metrics_args={"distribution": OnPolicyCorrelationMetricsModule.UpdateArgs()}
+        ),
     )
 
-    # Perform the logging via JAX debug callback
-    def logging_callback(idx: int, train_info: dict, eval_info: dict):
-        if (
-            idx % train_state.config.logging.track_each == 0
-            or idx + 1 == train_state.config.num_train_steps
-        ):
+    rng_key, eval_rng_key = jax.random.split(rng_key)
+    # Perform evaluation computations if needed
+    is_eval_step = idx % train_state.config.logging.eval_each == 0
+    is_eval_step = is_eval_step | (idx + 1 == train_state.config.num_train_steps)
+
+    metrics_state = jax.lax.cond(
+        is_eval_step,
+        lambda kwargs: train_state.metrics_module.process(**kwargs),
+        lambda kwargs: kwargs["metrics_state"],  # Do nothing if not eval step
+        {
+            "metrics_state": metrics_state,
+            "rng_key": eval_rng_key,
+            "args": train_state.metrics_module.ProcessArgs(
+                metrics_args={
+                    "corr": OnPolicyCorrelationMetricsModule.ProcessArgs(
+                        policy_params=policy_params,
+                        env_params=env_params,
+                    )
+                }
+            ),
+        },
+    )
+
+    def logging_callback(
+        idx: int, train_info: dict, metrics_state: gfnx.metrics.new.MultiMetricsState, cfg
+    ):
+        train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
+
+        if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
             log.info(f"Step {idx}")
-            log.info({key: float(value) for key, value in train_info.items()})
-            log.info({key: float(value) for key, value in eval_info.items()})
-            if train_state.config.logging.use_wandb:
+            log.info(train_info)
+            eval_info = train_state.metrics_module.get(metrics_state)
+            eval_info = {f"eval/{key}": float(value) for key, value in eval_info.items()}
+            log.info(eval_info)
+            if cfg.logging.use_wandb:
                 wandb.log(eval_info, commit=False)
 
-        if train_state.config.logging.use_wandb:
+        if cfg.logging.use_wandb and idx % cfg.logging.track_each == 0:
             wandb.log(train_info)
 
     # Get current learning rate
@@ -418,12 +404,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         logging_callback,
         idx,
         {
-            "train/mean_loss": mean_loss,
-            "train/entropy": log_info["entropy"].mean(),
-            "train/grad_norm": optax.tree_utils.tree_l2_norm(grads),
-            "train/learning_rate": current_lr,
+            "mean_loss": mean_loss,
+            "entropy": log_info["entropy"].mean(),
+            "grad_norm": optax.tree_utils.tree_l2_norm(grads),
+            "learning_rate": current_lr,
         },
-        {f"eval/{key}": value for key, value in eval_info.items()},
+        metrics_state,
+        train_state.config,
         ordered=True,
     )
 
@@ -433,6 +420,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         target_model=new_target_model,
         opt_state=opt_state,
         exploration_state=exploration_state,
+        metrics_state=metrics_state,
     )
 
 
@@ -464,13 +452,10 @@ def run_experiment(cfg: OmegaConf) -> None:
         n_bwd_actions=env.backward_action_space.n,
         train_backward_policy=cfg.agent.train_backward,
         emb_params={
-            "in_size": env_params.sequence_length
-            * env_params.bits_per_seq_elem,
+            "in_size": env_params.sequence_length * env_params.bits_per_seq_elem,
             **(OmegaConf.to_container(cfg.network.emb_params)),
         },
-        transformer_params=OmegaConf.to_container(
-            cfg.network.transformer_params
-        ),
+        transformer_params=OmegaConf.to_container(cfg.network.transformer_params),
         mlp_params=OmegaConf.to_container(cfg.network.mlp_params),
         key=net_init_key,
     )
@@ -508,21 +493,22 @@ def run_experiment(cfg: OmegaConf) -> None:
         step=jnp.array(0, dtype=jnp.int32),
     )
 
-    metrics_module = {
-        "corr": gfnx.metrics.PhyloTreeCorrelationMetric(
+    metrics_module = MultiMetricsModule({
+        "corr": OnPolicyCorrelationMetricsModule(
             n_rounds=cfg.metrics.n_rounds,
             n_terminal_states=cfg.metrics.n_terminal_states,
             batch_size=cfg.metrics.batch_size,
             fwd_policy_fn=fwd_policy_fn,
             bwd_policy_fn=bwd_policy_fn,
             env=env,
+        )
+    })
+    metrics_state = metrics_module.init(
+        eval_init_key,
+        metrics_module.InitArgs(
+            metrics_args={"corr": OnPolicyCorrelationMetricsModule.InitArgs(env_params=env_params)}
         ),
-    }
-    # Fill the initial states of metrics
-    metrics = {}
-    for key, module in metrics_module.items():
-        eval_init_key, new_key = jax.random.split(eval_init_key)
-        metrics[key] = module.init(new_key, env_params)
+    )
 
     train_state = TrainState(
         rng_key=rng_key,
@@ -535,13 +521,11 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         exploration_state=exploration_state,
         metrics_module=metrics_module,
-        metrics=metrics,
+        metrics_state=metrics_state,
         learning_rate_schedule=lr_schedule,
     )
     # Split train state into parameters and static parts to make jit work.
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
     @functools.partial(jax.jit, donate_argnums=(1,))
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging.tqdm_print_rate)
@@ -559,9 +543,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=cfg.wandb.tags,
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax lax.fori_loop
@@ -572,12 +554,17 @@ def run_experiment(cfg: OmegaConf) -> None:
         init_val=train_state_params,
     )
     jax.block_until_ready(train_state_params)
+    train_state = eqx.combine(train_state_params, train_state_static)
+    model = train_state.model
+    model_params = eqx.filter(model, eqx.is_array)
 
     # Save the final model
     path = hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-    cwd = os.path.join(path, "model")
+    cwd_train_state = os.path.join(path, "train_state")
+    cwd_model = os.path.join(path, "model")
     ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())
-    ckptr.save(cwd, train_state_params)
+    ckptr.save(cwd_train_state, args=ocp.args.StandardSave(train_state_params))
+    ckptr.save(cwd_model, args=ocp.args.StandardSave(model_params))
     ckptr.wait_until_finished()
 
 

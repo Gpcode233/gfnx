@@ -1,12 +1,10 @@
 """Reward functions used for QM9Small environment.
 """
 
-import itertools
 import pickle
 
 import chex
 import jax.numpy as jnp
-import numpy as np
 
 from ..base import BaseRewardModule, TLogReward, TReward
 from ..environment import (

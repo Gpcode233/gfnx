@@ -17,7 +17,8 @@ dependencies = [
   "levenshtein",
   "numpy==1.26.4",
   "jaxtyping",
-  "networkx"
+  "networkx",
+  "omegaconf"
 ]
 authors = [
   { name="Daniil Tiapkin", email="daniil.tiapkin@polytechnique.edu" },
@@ -43,6 +44,10 @@ baselines = [
   "pillow",
   "jraph"
 ]
+tests = [
+  "pytest",
+  "equinox"
+]
 
 [project.urls]
 Homepage = "https://github.com/d-tiapkin/gfnx"
@@ -56,8 +61,9 @@ exclude = [
     ".git",
     "build",
     "__pycache__",
+    "algo"
 ]
-line-length = 79
+line-length = 99
 indent-width = 4
 target-version = "py310"
 

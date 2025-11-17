@@ -3,7 +3,6 @@ from ..utils import QM9_SMALL_BLOCKS, QM9_SMALL_FULL_ALPHABET
 from .sequence import (
     EnvParams,  # noqa: F401
     EnvState,  # noqa: F401
-    FixedAutoregressiveSequenceEnvironment,
     FixedPrependAppendSequenceEnvironment,
 )
 

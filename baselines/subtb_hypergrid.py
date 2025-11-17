@@ -210,7 +210,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log_pb, jnp.expand_dims(bwd_actions_traj, axis=-1), axis=-1
         ).squeeze(-1)
         log_pb_along_traj = jnp.where(pad_mask, 0.0, log_pb_along_traj)
-        log_pb_along_traj = log_pb_along_traj + jnp.where(pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1])
+        log_pb_along_traj = log_pb_along_traj + \
+            jnp.where(pad_mask, 0.0, current_traj_data.log_gfn_reward[:, :-1])
 
         # log_flow
         log_flow = jnp.where(current_traj_data.pad, 0.0, log_flow_traj)
@@ -224,7 +225,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                     log_pf_subtraj = log_flow_start + (log_pf * mask).sum()
                     log_flow_finish = jnp.where(done[j - 1], 0.0, log_flow[j])
                     log_pb_subtraj = log_flow_finish + (log_pb * mask).sum()
-                    return weight * optax.losses.squared_error(log_pf_subtraj, log_pb_subtraj), weight
+                    loss = optax.losses.squared_error(log_pf_subtraj, log_pb_subtraj)
+                    return weight * loss, weight
                 return jax.lax.cond(pad[j - 1], lambda: (0.0, 0.0), fn)
             i, j = jnp.triu_indices(traj_len + 1, k=1)
             weighted_loss, weighted_norm = jax.vmap(

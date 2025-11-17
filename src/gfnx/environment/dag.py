@@ -86,23 +86,13 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         def get_state_nonterminal() -> EnvState:
             done = action == self.stop_action
             source, target = jnp.divmod(action, self.num_variables)
-            return jax.lax.cond(
-                done, get_state_finished, get_state_inter, source, target
-            )
+            return jax.lax.cond(done, get_state_finished, get_state_inter, source, target)
 
-        def get_state_finished(
-            source: chex.Array, target: chex.Array
-        ) -> EnvState:
-            return state.replace(
-                time=time + 1, is_terminal=True, is_initial=False
-            )
+        def get_state_finished(source: chex.Array, target: chex.Array) -> EnvState:
+            return state.replace(time=time + 1, is_terminal=True, is_initial=False)
 
-        def get_state_inter(
-            source: chex.Array, target: chex.Array
-        ) -> EnvState:
-            adjacency_matrix = state.adjacency_matrix.at[source, target].set(
-                True
-            )
+        def get_state_inter(source: chex.Array, target: chex.Array) -> EnvState:
+            adjacency_matrix = state.adjacency_matrix.at[source, target].set(True)
             closure_T = state.closure_T
             outer_product = jnp.logical_and(
                 jnp.expand_dims(closure_T[source], 0),
@@ -117,15 +107,11 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
                 is_initial=False,
             )
 
-        next_state = jax.lax.cond(
-            is_terminal, get_state_terminal, get_state_nonterminal
-        )
+        next_state = jax.lax.cond(is_terminal, get_state_terminal, get_state_nonterminal)
 
         return next_state, next_state.is_terminal, {}
 
-    def _single_source_bfs(
-        self, adjacency_t: chex.Array, start: int
-    ) -> chex.Array:
+    def _single_source_bfs(self, adjacency_t: chex.Array, start: int) -> chex.Array:
         """
         Returns a boolean 1D array 'visited' of shape (d,),
         indicating which nodes are reachable from 'start' in adjacency_t.
@@ -138,9 +124,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
 
         def cond_fun(carry):
             frontier, visited = carry
-            return jnp.any(
-                frontier
-            )  # continue while we have newly discovered nodes
+            return jnp.any(frontier)  # continue while we have newly discovered nodes
 
         def body_fun(carry):
             frontier, visited = carry
@@ -151,9 +135,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             new_visited = visited | new_frontier
             return (new_frontier, new_visited)
 
-        _, visited_final = jax.lax.while_loop(
-            cond_fun, body_fun, (frontier_init, visited_init)
-        )
+        _, visited_final = jax.lax.while_loop(cond_fun, body_fun, (frontier_init, visited_init))
         return visited_final
 
     def _single_compute_closure_t(self, adjacency_t: chex.Array) -> chex.Array:
@@ -163,9 +145,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         closure_t[i, j] = True if i can reach j in the transpose graph (G^T).
         """
         d = adjacency_t.shape[0]
-        closure = jax.vmap(lambda i: self._single_source_bfs(adjacency_t, i))(
-            jnp.arange(d)
-        )
+        closure = jax.vmap(lambda i: self._single_source_bfs(adjacency_t, i))(jnp.arange(d))
         # Force the diagonal True (i can reach i by convention)
         closure = jnp.logical_or(closure, jnp.eye(d, dtype=jnp.bool))
         return closure
@@ -187,9 +167,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
 
         def get_state_non_initial() -> EnvState:
             unterminate = backward_action == self.stop_action
-            return jax.lax.cond(
-                unterminate, get_state_terminating, get_state_inter
-            )
+            return jax.lax.cond(unterminate, get_state_terminating, get_state_inter)
 
         def get_state_terminating() -> EnvState:
             return state.replace(
@@ -201,9 +179,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
 
         def get_state_inter() -> EnvState:
             source, target = jnp.divmod(backward_action, self.num_variables)
-            adjacency_matrix = state.adjacency_matrix.at[source, target].set(
-                False
-            )
+            adjacency_matrix = state.adjacency_matrix.at[source, target].set(False)
             adjacency_t = adjacency_matrix.T
             closure_T = self._single_compute_closure_t(adjacency_t)
             return state.replace(
@@ -215,9 +191,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
                 is_pad=False,
             )
 
-        prev_state = jax.lax.cond(
-            is_initial, get_state_initial, get_state_non_initial
-        )
+        prev_state = jax.lax.cond(is_initial, get_state_initial, get_state_non_initial)
         return prev_state, prev_state.is_initial, {}
 
     def get_obs(self, state: EnvState, env_params: EnvParams) -> chex.Array:
@@ -241,25 +215,19 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
     ) -> chex.Array:
         return backward_action
 
-    def get_invalid_mask(
-        self, state: EnvState, env_params: EnvParams
-    ) -> chex.Array:
+    def get_invalid_mask(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         """Invalid mask for forward actions.
         Constructed as a logical or of adjacency matrix and
         transitive closure of transposed adjacency matrix.
         """
         num_envs = state.time.shape[0]
-        mask = jnp.logical_or(state.adjacency_matrix, state.closure_T).reshape(
-            num_envs, -1
-        )
+        mask = jnp.logical_or(state.adjacency_matrix, state.closure_T).reshape(num_envs, -1)
         mask = jnp.concatenate(
             [mask, jnp.zeros((num_envs, 1), dtype=jnp.bool)], axis=1
         )  # stop action == last action is always valid
         return mask
 
-    def get_invalid_backward_mask(
-        self, state: EnvState, params: EnvParams
-    ) -> chex.Array:
+    def get_invalid_backward_mask(self, state: EnvState, params: EnvParams) -> chex.Array:
         """Invalid mask for backward actions.
         Invert adjacency matrix and allow stop action only for the terminal state.
         """

@@ -65,11 +65,13 @@ class MLPPolicy(eqx.Module):
             output_size += n_bwd_actions
 
         encoder_key, pooler_key = jax.random.split(key)
-        self.encoder = eqx.nn.MLP(in_size=encoder_params["max_length"] * encoder_params["vocab_size"], 
-                                  out_size=encoder_params["hidden_size"], 
-                                  width_size=encoder_params["hidden_size"], 
-                                  depth=encoder_params["depth"], 
-                                  key=encoder_key)
+        self.encoder = eqx.nn.MLP(
+            in_size=encoder_params["max_length"] * encoder_params["vocab_size"],
+            out_size=encoder_params["hidden_size"],
+            width_size=encoder_params["hidden_size"],
+            depth=encoder_params["depth"],
+            key=encoder_key,
+        )
         self.pooler = eqx.nn.Linear(
             in_features=encoder_params["hidden_size"],
             out_features=output_size,
@@ -91,12 +93,8 @@ class MLPPolicy(eqx.Module):
                 output, [self.n_fwd_actions, self.n_fwd_actions + 1], axis=-1
             )
         else:
-            forward_logits, flow = jnp.split(
-                output, [self.n_fwd_actions], axis=-1
-            )
-            backward_logits = jnp.zeros(
-                shape=(self.n_bwd_actions,), dtype=jnp.float32
-            )
+            forward_logits, flow = jnp.split(output, [self.n_fwd_actions], axis=-1)
+            backward_logits = jnp.zeros(shape=(self.n_bwd_actions,), dtype=jnp.float32)
         return {
             "forward_logits": forward_logits,
             "log_flow": flow.squeeze(-1),
@@ -126,14 +124,10 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 1. Generate a batch of trajectories and split to transitions
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
-    def fwd_policy_fn(
-        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params
-    ) -> chex.Array:
+    def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -173,16 +167,10 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         log_flow = policy_outputs["log_flow"]
 
         # Compute the stats for the next state
-        next_policy_outputs = jax.vmap(model, in_axes=(0,))(
-            transitions.next_obs
-        )
+        next_policy_outputs = jax.vmap(model, in_axes=(0,))(transitions.next_obs)
         bwd_logits = next_policy_outputs["backward_logits"]
-        next_bwd_invalid_mask = env.get_invalid_backward_mask(
-            transitions.next_state, env_params
-        )
-        masked_bwd_logits = gfnx.utils.mask_logits(
-            bwd_logits, next_bwd_invalid_mask
-        )
+        next_bwd_invalid_mask = env.get_invalid_backward_mask(transitions.next_state, env_params)
+        masked_bwd_logits = gfnx.utils.mask_logits(bwd_logits, next_bwd_invalid_mask)
         bwd_all_log_probs = jax.nn.log_softmax(masked_bwd_logits, axis=-1)
         bwd_logprobs = jnp.take_along_axis(
             bwd_all_log_probs, jnp.expand_dims(bwd_actions, axis=-1), axis=-1
@@ -202,9 +190,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         ).mean()
         return loss, log_info
 
-    (mean_loss, log_info), grads = eqx.filter_value_and_grad(
-        loss_fn, has_aux=True
-    )(train_state.model)
+    (mean_loss, log_info), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
+        train_state.model
+    )
     # Step 3. Update the model with grads
     updates, opt_state = train_state.optimizer.update(
         grads,
@@ -223,7 +211,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         train_state.metrics_module.get,
         lambda a, b: {"tv": -1.0, "kl": -1.0, "reward_delta": -1.0},
         metric_state,
-        env_params
+        env_params,
     )
 
     # Perform the logging via JAX debug callback
@@ -311,9 +299,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         metrics=metrics,
     )
     # Split train state into parameters and static parts to make jit work.
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
     @functools.partial(jax.jit, donate_argnums=(1,))
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging["tqdm_print_rate"])
@@ -331,9 +317,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=["DB", env.name.upper()],
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax lax.fori_loop

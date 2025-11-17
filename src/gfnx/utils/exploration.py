@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from typing import Callable, Literal
 
 import chex
@@ -95,6 +94,4 @@ def apply_epsilon_greedy_vmap(
     epsilon: chex.Array,
 ) -> chex.Array:
     rng_keys = jax.random.split(rng_key, logits.shape[0])
-    return jax.vmap(apply_epsilon_greedy, in_axes=(0, 0, None))(
-        rng_keys, logits, epsilon
-    )
+    return jax.vmap(apply_epsilon_greedy, in_axes=(0, 0, None))(rng_keys, logits, epsilon)

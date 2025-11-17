@@ -6,7 +6,7 @@ import jax.numpy as jnp
 
 from ..base import BaseRewardModule, TLogReward, TReward, TRewardParams
 from ..environment import BitseqEnvParams, BitseqEnvState
-from ..utils import (
+from ..utils.bitseq import (
     construct_mode_set,
     detokenize,
     mode_set_distance,
@@ -41,9 +41,7 @@ class BitseqRewardModule(BaseRewardModule[BitseqEnvState, BitseqEnvParams]):
         self.mode_set_size = mode_set_size
         self.reward_exponent = reward_exponent
 
-    def init(
-        self, rng_key: chex.PRNGKey, dummy_state: BitseqEnvState
-    ) -> TRewardParams:
+    def init(self, rng_key: chex.PRNGKey, dummy_state: BitseqEnvState) -> TRewardParams:
         return {
             "mode_set": construct_mode_set(
                 self.sentence_len,
@@ -54,19 +52,15 @@ class BitseqRewardModule(BaseRewardModule[BitseqEnvState, BitseqEnvParams]):
             )
         }
 
-    def log_reward(
-        self, state: BitseqEnvState, env_params: BitseqEnvParams
-    ) -> TLogReward:
+    def log_reward(self, state: BitseqEnvState, env_params: BitseqEnvParams) -> TLogReward:
         def single_log_reward(tokens, reward_params):
             bitseq = detokenize(tokens, self.k)
             mode_dist = mode_set_distance(bitseq, reward_params["mode_set"])
-            return - self.reward_exponent * mode_dist.astype(jnp.float32)
+            return -self.reward_exponent * mode_dist.astype(jnp.float32)
 
         return jax.vmap(single_log_reward, in_axes=(0, None))(
             state.tokens, env_params.reward_params
         )
 
-    def reward(
-        self, state: BitseqEnvState, env_params: BitseqEnvParams
-    ) -> TReward:
+    def reward(self, state: BitseqEnvState, env_params: BitseqEnvParams) -> TReward:
         return jnp.exp(self.log_reward(state, env_params))

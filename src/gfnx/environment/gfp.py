@@ -9,9 +9,7 @@ from .sequence import (
 
 class GFPEnvironment(FixedAutoregressiveSequenceEnvironment):
     def __init__(self, reward_module: TRewardModule) -> None:
-        self.char_to_id = {
-            char: i for i, char in enumerate(PROTEINS_FULL_ALPHABET)
-        }
+        self.char_to_id = {char: i for i, char in enumerate(PROTEINS_FULL_ALPHABET)}
 
         super().__init__(
             reward_module,

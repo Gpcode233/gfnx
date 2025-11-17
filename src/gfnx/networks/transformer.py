@@ -54,9 +54,7 @@ class EmbedderBlock(eqx.Module):
         positions = jax.vmap(self.position_embedder)(position_ids)
         embedded_inputs = tokens + positions
         embedded_inputs = jax.vmap(self.layernorm)(embedded_inputs)
-        embedded_inputs = self.dropout(
-            embedded_inputs, inference=not enable_dropout, key=key
-        )
+        embedded_inputs = self.dropout(embedded_inputs, inference=not enable_dropout, key=key)
         return embedded_inputs
 
 
@@ -152,9 +150,7 @@ class AttentionBlock(eqx.Module):
     ) -> Float[Array, "seq_len hidden_size"]:
         if mask is not None:
             mask = self.make_self_attention_mask(mask)
-        attention_key, dropout_key = (
-            (None, None) if key is None else jax.random.split(key)
-        )
+        attention_key, dropout_key = (None, None) if key is None else jax.random.split(key)
 
         attention_output = self.attention(
             query=inputs,
@@ -166,9 +162,7 @@ class AttentionBlock(eqx.Module):
         )
 
         result = attention_output
-        result = self.dropout(
-            result, inference=not enable_dropout, key=dropout_key
-        )
+        result = self.dropout(result, inference=not enable_dropout, key=dropout_key)
         result = result + inputs
         result = jax.vmap(self.layernorm)(result)
         return result
@@ -177,9 +171,7 @@ class AttentionBlock(eqx.Module):
         self, mask: Int[Array, " seq_len"]
     ) -> Float[Array, "num_heads seq_len seq_len"]:
         """Create self-attention mask from sequence-level mask."""
-        mask = jnp.multiply(
-            jnp.expand_dims(mask, axis=-1), jnp.expand_dims(mask, axis=-2)
-        )
+        mask = jnp.multiply(jnp.expand_dims(mask, axis=-1), jnp.expand_dims(mask, axis=-2))
         mask = jnp.expand_dims(mask, axis=-3)
         mask = jnp.repeat(mask, repeats=self.num_heads, axis=-3)
         return mask.astype(jnp.float32)
@@ -225,16 +217,12 @@ class TransformerLayer(eqx.Module):
         enable_dropout: bool = False,
         key: chex.PRNGKey | None = None,
     ) -> Float[Array, "seq_len hidden_size"]:
-        attn_key, ff_key = (
-            (None, None) if key is None else jax.random.split(key)
-        )
+        attn_key, ff_key = (None, None) if key is None else jax.random.split(key)
         attention_output = self.attention_block(
             inputs, mask, enable_dropout=enable_dropout, key=attn_key
         )
         seq_len = inputs.shape[0]
-        ff_keys = (
-            None if ff_key is None else jax.random.split(ff_key, num=seq_len)
-        )
+        ff_keys = None if ff_key is None else jax.random.split(ff_key, num=seq_len)
         output = jax.vmap(self.ff_block, in_axes=(0, None, 0))(
             attention_output, enable_dropout, ff_keys
         )
@@ -311,9 +299,7 @@ class Encoder(eqx.Module):
         x = embeddings
         layer_outputs = []
         for layer in self.layers:
-            cl_key, l_key = (
-                (None, None) if l_key is None else jax.random.split(l_key)
-            )
+            cl_key, l_key = (None, None) if l_key is None else jax.random.split(l_key)
             x = layer(x, mask, enable_dropout=enable_dropout, key=cl_key)
             layer_outputs.append(x)
 

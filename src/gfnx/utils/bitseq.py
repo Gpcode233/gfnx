@@ -14,9 +14,7 @@ def construct_mode_set(
     rng_key: chex.PRNGKey,
 ):
     n_choices = sentence_len // block_len
-    choices = jax.random.choice(
-        rng_key, block_set, shape=(mode_set_size, n_choices)
-    )
+    choices = jax.random.choice(rng_key, block_set, shape=(mode_set_size, n_choices))
     mode_set = choices.reshape(mode_set_size, -1)
     chex.assert_shape(mode_set, (mode_set_size, sentence_len))
     return mode_set
@@ -81,9 +79,7 @@ def construct_binary_test_set(rng_key: chex.PRNGKey, mode_set: chex.Array):
         test_set.append(mode)
         for cnt in range(1, len_mode):
             rng_key, choice_key = jax.random.split(rng_key)
-            subset = jax.random.choice(
-                choice_key, len_mode, shape=(cnt,), replace=False
-            )
+            subset = jax.random.choice(choice_key, len_mode, shape=(cnt,), replace=False)
             change_mask = jnp.zeros(len_mode, dtype=jnp.bool)
             change_mask = change_mask.at[subset].set(True)
             test_set.append(jnp.logical_xor(mode, change_mask))

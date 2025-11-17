@@ -12,7 +12,9 @@ IMPORTANT: Go through the SmilesTokenizer in deepchem and:
     #self.max_len_sentences_pair = self.max_length - 3
 
     - rename 
-    self.init_kwargs["max_length"] = self.max_length --> self.init_kwargs["model_max_length"] = self.model_max_length
+    self.init_kwargs["max_length"] = self.max_length 
+    --> 
+    self.init_kwargs["model_max_length"] = self.model_max_length
 """
 
 from typing import Tuple
@@ -20,7 +22,6 @@ from typing import Tuple
 import chex
 import jax.numpy as jnp
 import numpy as np
-
 from sklearn.model_selection import train_test_split
 
 from .base import RewardProxyDataset
@@ -34,7 +35,9 @@ class GFPRewardProxyDataset(RewardProxyDataset):
     """
 
     def __init__(self) -> None:
-        from design_bench.datasets.discrete.gfp_dataset import GFPDataset  # pyright: ignore[reportMissingImports]
+        from design_bench.datasets.discrete.gfp_dataset import (
+            GFPDataset,  # pyright: ignore[reportMissingImports]
+        )
 
         split_rng_key = np.random.RandomState(0)
         dataset = GFPDataset()

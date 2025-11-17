@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 import chex
 import equinox as eqx
@@ -8,14 +8,14 @@ import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
+from datasets.amp import AMPRewardProxyDataset
+from datasets.base import RewardProxyDataset
+from datasets.gfp import GFPRewardProxyDataset
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
 
 from gfnx.networks.reward_models import EqxTransformerRewardModel
 
-from datasets.amp import AMPRewardProxyDataset
-from datasets.base import RewardProxyDataset
-from datasets.gfp import GFPRewardProxyDataset
 
 @dataclass
 class RewardProxyTrainingConfig:
@@ -48,15 +48,10 @@ def fit_model(
         "regression": optax.losses.squared_error,
     }[config.task]
 
-    param_count = sum(
-        x.size
-        for x in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
-    )
+    param_count = sum(x.size for x in jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array)))
     print(f"Number of parameters : {param_count}")
 
-    optimizer = optax.adamw(
-        learning_rate=config.learning_rate, weight_decay=config.weight_decay
-    )
+    optimizer = optax.adamw(learning_rate=config.learning_rate, weight_decay=config.weight_decay)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
     best_loss = 1e10  # Some large number
@@ -72,18 +67,14 @@ def fit_model(
         key: chex.PRNGKey,
     ):
         def loss_fn(model, data, target, keys):
-            pred_score = jax.vmap(
-                lambda x, key: model(x, enable_dropout=True, key=key)
-            )(data, keys).squeeze()
+            pred_score = jax.vmap(lambda x, key: model(x, enable_dropout=True, key=key))(
+                data, keys
+            ).squeeze()
             return batch_loss_fn(pred_score, target).mean()
 
         keys = jax.random.split(key, data.shape[0])
-        loss, grad = eqx.filter_value_and_grad(loss_fn)(
-            model, data, target, keys
-        )
-        updates, new_opt_state = optimizer.update(
-            grad, opt_state, eqx.filter(model, eqx.is_array)
-        )
+        loss, grad = eqx.filter_value_and_grad(loss_fn)(model, data, target, keys)
+        updates, new_opt_state = optimizer.update(grad, opt_state, eqx.filter(model, eqx.is_array))
         new_model = eqx.apply_updates(model, updates)
         return new_model, new_opt_state, loss
 
@@ -91,9 +82,7 @@ def fit_model(
     for epoch in tqdm(range(config.num_epochs)):
         # Shuffle dataset in the start of each epoch
         rng_key, shuffle_rng_key = jax.random.split(rng_key)
-        shuffle_idx = jax.random.permutation(
-            shuffle_rng_key, jnp.arange(train_size)
-        )
+        shuffle_idx = jax.random.permutation(shuffle_rng_key, jnp.arange(train_size))
         train_data, train_score = (
             train_data[shuffle_idx],
             train_score[shuffle_idx],
@@ -108,9 +97,7 @@ def fit_model(
                 train_score[idx:batch_end_idx],
             )
             rng_key, batch_key = jax.random.split(rng_key)
-            model, opt_state, loss = update(
-                model, opt_state, batch_data, batch_target, batch_key
-            )
+            model, opt_state, loss = update(model, opt_state, batch_data, batch_target, batch_key)
             train_loss += loss
             n_batches += 1
 
@@ -131,9 +118,9 @@ def fit_model(
 
             rng_key, batch_key = jax.random.split(rng_key)
             batch_keys = jax.random.split(batch_key, batch_data.shape[0])
-            pred_score = jax.vmap(
-                lambda x, key: model(x, enable_dropout=True, key=key)
-            )(batch_data, batch_keys).squeeze()
+            pred_score = jax.vmap(lambda x, key: model(x, enable_dropout=True, key=key))(
+                batch_data, batch_keys
+            ).squeeze()
             loss = batch_loss_fn(pred_score, batch_target).mean()
             if config.task == "classification":
                 acc = jnp.mean(jnp.equal(pred_score > 0, batch_target))
@@ -202,9 +189,7 @@ def main(cfg: DictConfig) -> None:
     path = cfg.save_path
     if not os.path.isabs(path):
         # Assume that the path is relative to the root of the project
-        module_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..")
-        )
+        module_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         path = os.path.join(module_path, path)
     path = ocp.test_utils.erase_and_create_empty(path)
     ckptr = ocp.AsyncCheckpointer(ocp.StandardCheckpointHandler())

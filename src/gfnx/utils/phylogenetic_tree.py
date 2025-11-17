@@ -53,9 +53,7 @@ CONFIGS = {
 }
 
 
-def get_phylo_initialization_args(
-    dataset_name: str, data_folder: Path
-) -> Tuple[dict, dict]:
+def get_phylo_initialization_args(dataset_name: str, data_folder: Path) -> Tuple[dict, dict]:
     """
     Prepares the arguments required to initialize the Phylogenetic Tree Environment
     and its associated reward module from the provided dataset.
@@ -95,10 +93,7 @@ def get_phylo_initialization_args(
     # Map each character to its binary encoding.
     char_dict = CHARACTERS_MAPS[sequence_type]
     sequences = jnp.array(
-        [
-            [char_dict[c] for c in sequence]
-            for sequence in sequences_dict.values()
-        ],
+        [[char_dict[c] for c in sequence] for sequence in sequences_dict.values()],
         dtype=jnp.uint8,
     )
 

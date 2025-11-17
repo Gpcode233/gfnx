@@ -7,9 +7,7 @@ from .sequence import (
 
 
 class BitseqEnvironment(NonAutoregressiveSequenceEnvironment):
-    def __init__(
-        self, reward_module: TRewardModule, n: int = 120, k: int = 8
-    ) -> None:
+    def __init__(self, reward_module: TRewardModule, n: int = 120, k: int = 8) -> None:
         self.n = n
         self.k = k
         assert n % k == 0, "n should be divisible by k"
@@ -23,7 +21,7 @@ class BitseqEnvironment(NonAutoregressiveSequenceEnvironment):
             eos_token=2**k + 2,
             pad_token=2**k,
         )
-    
+
     @property
     def name(self) -> str:
         """Environment name."""

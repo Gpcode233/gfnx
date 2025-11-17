@@ -13,9 +13,7 @@ from ..environment import DAGEnvParams, DAGEnvState
 class BaseDAGLikelihood:
     data: chex.Array
 
-    def log_prob(
-        self, state: DAGEnvState, env_params: DAGEnvParams
-    ) -> TLogReward:
+    def log_prob(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
         """Computes the log-likelihood of the data given the state - graph G:
 
             log P(D | G) = sum_j LocalScore(X_j | Pa_G(X_j))
@@ -61,15 +59,9 @@ class BaseDAGLikelihood:
         """
         arange = jnp.arange(state.time.shape[0])  # [B]
         source, target = jnp.divmod(action, env_params.num_variables)
-        parents = state.adjacency_matrix[
-            arange, :, target
-        ]  # [B, num_variables]
-        next_parents = next_state.adjacency_matrix[
-            arange, :, target
-        ]  # [B, num_variables]
-        return self._local_score(target, next_parents) - self._local_score(
-            target, parents
-        )
+        parents = state.adjacency_matrix[arange, :, target]  # [B, num_variables]
+        next_parents = next_state.adjacency_matrix[arange, :, target]  # [B, num_variables]
+        return self._local_score(target, next_parents) - self._local_score(target, parents)
 
     def _local_score(
         self,
@@ -98,9 +90,7 @@ class ZeroScore(BaseDAGLikelihood):
     ) -> TLogReward:
         return jnp.zeros(state.time.shape[0])  # [B]
 
-    def _local_score(
-        self, variables: chex.Array, parents: chex.Array
-    ) -> TLogReward:
+    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
         return jnp.zeros(variables.shape[0])  # [B]
 
 
@@ -117,9 +107,7 @@ class LinearGaussianScore(BaseDAGLikelihood):
         self.prior_scale = prior_scale
         self.obs_scale = obs_scale
 
-    def _local_score(
-        self, variables: chex.Array, parents: chex.Array
-    ) -> TLogReward:
+    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
         num_samples, num_variables = self.data.shape
         masked_data = self.data * parents[:, jnp.newaxis]
 
@@ -131,9 +119,7 @@ class LinearGaussianScore(BaseDAGLikelihood):
             self.prior_scale**2
         ) * jnp.matmul(masked_data.transpose(0, 2, 1), masked_data)
         term1 = jnp.sum(diffs**2, axis=1)
-        term2 = -jnp.sum(
-            y * jnp.linalg.solve(sigma_matrix, y[..., None])[..., 0], axis=1
-        )
+        term2 = -jnp.sum(y * jnp.linalg.solve(sigma_matrix, y[..., None])[..., 0], axis=1)
         _, term3 = jnp.linalg.slogdet(sigma_matrix)
         term4 = 2 * (num_samples - num_variables) * jnp.log(self.obs_scale)
         term5 = num_samples * jnp.log(2 * jnp.pi)
@@ -160,9 +146,7 @@ class BGeScore(BaseDAGLikelihood):
         self.alpha_mu = alpha_mu
         self.alpha_w = alpha_w
 
-        self.t = (self.alpha_mu * (self.alpha_w - self.num_variables - 1)) / (
-            self.alpha_mu + 1
-        )
+        self.t = (self.alpha_mu * (self.alpha_w - self.num_variables - 1)) / (self.alpha_mu + 1)
 
         t_matrix = self.t * jnp.eye(self.num_variables)
         data_mean = jnp.mean(data, axis=0, keepdims=True)
@@ -171,41 +155,21 @@ class BGeScore(BaseDAGLikelihood):
         self.r_matrix = (
             t_matrix
             + jnp.matmul(data_centered.T, data_centered)
-            + (
-                (self.num_samples * self.alpha_mu)
-                / (self.num_samples + self.alpha_mu)
-            )
+            + ((self.num_samples * self.alpha_mu) / (self.num_samples + self.alpha_mu))
             * jnp.dot((data_mean - self.mean_obs).T, data_mean - self.mean_obs)
         )
         all_parents = jnp.arange(self.num_variables)
         self.log_gamma_term = (
-            0.5
-            * (
-                jnp.log(self.alpha_mu)
-                - jnp.log(self.num_samples + self.alpha_mu)
-            )
+            0.5 * (jnp.log(self.alpha_mu) - jnp.log(self.num_samples + self.alpha_mu))
             + gammaln(
-                0.5
-                * (
-                    self.num_samples
-                    + self.alpha_w
-                    - self.num_variables
-                    + all_parents
-                    + 1
-                )
+                0.5 * (self.num_samples + self.alpha_w - self.num_variables + all_parents + 1)
             )
-            - gammaln(
-                0.5 * (self.alpha_w - self.num_variables + all_parents + 1)
-            )
+            - gammaln(0.5 * (self.alpha_w - self.num_variables + all_parents + 1))
             - 0.5 * self.num_samples * jnp.log(jnp.pi)
-            + 0.5
-            * (self.alpha_w - self.num_variables + 2 * all_parents + 1)
-            * jnp.log(self.t)
+            + 0.5 * (self.alpha_w - self.num_variables + 2 * all_parents + 1) * jnp.log(self.t)
         )
 
-    def _local_score(
-        self, variables: chex.Array, parents: chex.Array
-    ) -> TLogReward:
+    def _local_score(self, variables: chex.Array, parents: chex.Array) -> TLogReward:
         def _logdet(array: chex.Array, mask: chex.Array) -> chex.Array:
             mask = mask[:, None, :] * mask[:, :, None]
             array = mask * array + (1.0 - mask) * jnp.eye(self.num_variables)
@@ -216,12 +180,10 @@ class BGeScore(BaseDAGLikelihood):
         arange = jnp.arange(parents.shape[0])
         parents_and_variable = parents.at[arange, variables].set(True)
 
-        factor = (
-            self.num_samples + self.alpha_w - self.num_variables + num_parents
-        )
+        factor = self.num_samples + self.alpha_w - self.num_variables + num_parents
 
-        log_term_r = 0.5 * factor * _logdet(self.r_matrix, parents) - 0.5 * (
-            factor + 1
-        ) * _logdet(self.r_matrix, parents_and_variable)
+        log_term_r = 0.5 * factor * _logdet(self.r_matrix, parents) - 0.5 * (factor + 1) * _logdet(
+            self.r_matrix, parents_and_variable
+        )
 
         return self.log_gamma_term[num_parents] + log_term_r

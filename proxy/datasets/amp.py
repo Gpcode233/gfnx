@@ -27,7 +27,9 @@ class AMPRewardProxyDataset(RewardProxyDataset):
     def __init__(self, split="D", nfold=5) -> None:
         rng = np.random.RandomState(142857)
         # Get the data
-        from clamp_common_eval.defaults import get_default_data_splits  # pyright: ignore[reportMissingImports]
+        from clamp_common_eval.defaults import (
+            get_default_data_splits,  # pyright: ignore[reportMissingImports]
+        )
 
         source = get_default_data_splits(setting="Target")
         data = source.sample(split, -1)
@@ -37,13 +39,9 @@ class AMPRewardProxyDataset(RewardProxyDataset):
             np.array(source.d2_pos.group),
         ))
         n_pos, n_neg = len(data["AMP"]), len(data["nonAMP"])
-        pos_train, pos_valid = next(
-            GroupKFold(nfold).split(np.arange(n_pos), groups=groups)
-        )
+        pos_train, pos_valid = next(GroupKFold(nfold).split(np.arange(n_pos), groups=groups))
         neg_train, neg_valid = next(
-            GroupKFold(nfold).split(
-                np.arange(n_neg), groups=rng.randint(0, nfold, n_neg)
-            )
+            GroupKFold(nfold).split(np.arange(n_neg), groups=rng.randint(0, nfold, n_neg))
         )
 
         # Collect splitted data
@@ -69,13 +67,9 @@ class AMPRewardProxyDataset(RewardProxyDataset):
         pad_token = self.char_to_id["[PAD]"]
         processed_seqs = []
         for seq in seqs:
-            seq = [
-                self.char_to_id[char] for char in seq
-            ]  # All characters should be correct
+            seq = [self.char_to_id[char] for char in seq]  # All characters should be correct
             if len(seq) < self.max_len:
-                seq += [eos_token] + [pad_token] * (
-                    self.max_len - len(seq) - 1
-                )
+                seq += [eos_token] + [pad_token] * (self.max_len - len(seq) - 1)
             processed_seqs.append(seq[: self.max_len])
         return jnp.array(processed_seqs)
 

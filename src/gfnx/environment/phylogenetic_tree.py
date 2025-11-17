@@ -59,6 +59,11 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         indices = jnp.triu_indices(self.num_nodes, k=1)
         self.lefts = indices[0]
         self.rights = indices[1]
+    
+    @property
+    def name(self) -> str:
+        """Environment name."""
+        return "PhyloTree-v0"
 
     def get_init_state(self, num_envs: int) -> EnvState:
         """Returns batch of initial states"""
@@ -88,12 +93,8 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             left_child=jnp.full(
                 (num_envs, 2 * self.num_nodes - 1), -1, dtype=jnp.int32
             ),  # -1 is the padding value
-            right_child=jnp.full(
-                (num_envs, 2 * self.num_nodes - 1), -1, dtype=jnp.int32
-            ),
-            parent=jnp.full(
-                (num_envs, 2 * self.num_nodes - 1), -1, dtype=jnp.int32
-            ),
+            right_child=jnp.full((num_envs, 2 * self.num_nodes - 1), -1, dtype=jnp.int32),
+            parent=jnp.full((num_envs, 2 * self.num_nodes - 1), -1, dtype=jnp.int32),
             to_root=jnp.repeat(
                 jnp.arange(self.num_nodes)[jnp.newaxis], num_envs, axis=0
             ),  # every node is a root
@@ -132,12 +133,8 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             right = state.to_root[self.rights[action]]
             # If there's overlap (both sequences have 1 in same position), keep it
             # Otherwise, take the union
-            overlap = jnp.bitwise_and(
-                state.sequences[left], state.sequences[right]
-            )
-            union = jnp.bitwise_or(
-                state.sequences[left], state.sequences[right]
-            )
+            overlap = jnp.bitwise_and(state.sequences[left], state.sequences[right])
+            union = jnp.bitwise_or(state.sequences[left], state.sequences[right])
             new_sequence = jnp.where(overlap > 0, overlap, union)
             # fmt: off
             next_state = state.replace(
@@ -163,9 +160,7 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
                 is_terminal=jnp.all(next_state.to_root[1:] == -1)
             )  # all but first node are inner nodes
 
-        next_state = jax.lax.cond(
-            is_terminal, get_state_terminal, get_state_nonterminal
-        )
+        next_state = jax.lax.cond(is_terminal, get_state_terminal, get_state_nonterminal)
 
         return next_state, next_state.is_terminal, {}
 
@@ -288,19 +283,14 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             return prev_state.replace(
                 length=prev_state.length - 1,
                 is_initial=jnp.all(
-                    prev_state.to_root[: self.num_nodes]
-                    == jnp.arange(self.num_nodes)
+                    prev_state.to_root[: self.num_nodes] == jnp.arange(self.num_nodes)
                 ),  # also it is equal to prev_state.length == num_nodes + 1
             )
 
-        prev_state = jax.lax.cond(
-            is_initial, get_state_initial, get_state_non_initial
-        )
+        prev_state = jax.lax.cond(is_initial, get_state_initial, get_state_non_initial)
         return prev_state, prev_state.is_initial, {}
 
-    def get_obs(
-        self, state: EnvState, env_params: EnvParams
-    ) -> chex.ArrayTree:
+    def get_obs(self, state: EnvState, env_params: EnvParams) -> chex.ArrayTree:
         """Convert state to observation"""
 
         def single_get_obs(state: EnvState) -> chex.Array:
@@ -325,8 +315,7 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             [..., 0b00101, ...] <-> [..., [1, 0, 1, 0, 0], ...]
             """
             fitch_features = (
-                sequences[..., jnp.newaxis]
-                & (1 << jnp.arange(self.bits_per_seq_elem))
+                sequences[..., jnp.newaxis] & (1 << jnp.arange(self.bits_per_seq_elem))
             ) > 0  # [num_nodes, sequence_length, bits_per_seq_elem]
             return jnp.where(fitch_features, 1, 0).astype(jnp.uint8)
 
@@ -354,15 +343,11 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         batch_idx = jnp.arange(state.time.shape[0])
         left = state.to_leaf[
             batch_idx,
-            state.left_child[
-                batch_idx, state.to_root[batch_idx, backward_action]
-            ],
+            state.left_child[batch_idx, state.to_root[batch_idx, backward_action]],
         ]
         right = state.to_leaf[
             batch_idx,
-            state.right_child[
-                batch_idx, state.to_root[batch_idx, backward_action]
-            ],
+            state.right_child[batch_idx, state.to_root[batch_idx, backward_action]],
         ]
         forward_action = (
             left * (2 * self.num_nodes - 1 - left) // 2 + right - (left + 1)
@@ -370,22 +355,16 @@ class PhyloTreeEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
 
         return forward_action
 
-    def get_invalid_mask(
-        self, state: EnvState, env_params: EnvParams
-    ) -> chex.Array:
+    def get_invalid_mask(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         """Returns mask of invalid actions"""
 
         def single_get_invalid_mask(state: EnvState) -> chex.Array:
-            mask = (state.to_root == -1)[self.lefts] | (state.to_root == -1)[
-                self.rights
-            ]
+            mask = (state.to_root == -1)[self.lefts] | (state.to_root == -1)[self.rights]
             return mask
 
         return jax.vmap(single_get_invalid_mask)(state)
 
-    def get_invalid_backward_mask(
-        self, state: EnvState, env_params: EnvParams
-    ) -> chex.Array:
+    def get_invalid_backward_mask(self, state: EnvState, env_params: EnvParams) -> chex.Array:
         """Returns mask of invalid backward actions"""
 
         def single_get_invalid_backward_mask(state: EnvState) -> chex.Array:

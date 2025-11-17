@@ -225,9 +225,7 @@ def generic_rollout(
             env_state, action, env_params
         )
         log_probs = jax.nn.log_softmax(masked_logits)
-        sampled_log_probs = jnp.take_along_axis(
-            log_probs, action[..., None], axis=-1
-        ).squeeze(-1)
+        sampled_log_probs = jnp.take_along_axis(log_probs, action[..., None], axis=-1).squeeze(-1)
         info = {
             "entropy": -jnp.sum(policy_probs * log_probs, axis=-1),
             "sampled_log_prob": sampled_log_probs,
@@ -268,22 +266,16 @@ def generic_rollout(
 
     # Now, the shape of traj data is [(T + 1) x B x ...]
     # Need to transpose it to [B x (T + 1) x ...]
-    chex.assert_tree_shape_prefix(
-        traj_data, (env.max_steps_in_episode + 1, num_envs)
-    )
+    chex.assert_tree_shape_prefix(traj_data, (env.max_steps_in_episode + 1, num_envs))
     traj_data = jax.tree.map(
         lambda x: jnp.transpose(x, axes=(1, 0) + tuple(range(2, x.ndim))),
         traj_data,
     )
-    chex.assert_tree_shape_prefix(
-        traj_data, (num_envs, env.max_steps_in_episode + 1)
-    )
+    chex.assert_tree_shape_prefix(traj_data, (num_envs, env.max_steps_in_episode + 1))
 
     # Logging data
     final_env_state = final_traj_stats.env_state
-    traj_entropy = jnp.sum(
-        jnp.where(traj_data.pad, 0.0, traj_data.info["entropy"]), axis=1
-    )
+    traj_entropy = jnp.sum(jnp.where(traj_data.pad, 0.0, traj_data.info["entropy"]), axis=1)
     return traj_data, {
         "entropy": traj_entropy,
         "final_env_state": final_env_state,
@@ -333,6 +325,116 @@ def split_traj_to_transitions(traj_data: TrajectoryData) -> TransitionData:
         pad=slice_prev(traj_data.pad),
     )
     # Reshape all the arrays to [BT x ...]
-    return jax.tree.map(
-        lambda x: x.reshape((-1,) + x.shape[2:]), base_transition_data
+    return jax.tree.map(lambda x: x.reshape((-1,) + x.shape[2:]), base_transition_data)
+
+
+def _compute_trajectory_log_ratio(
+    env: TEnvironment,
+    traj_data: TrajectoryData,
+    env_params: TEnvParams,
+    is_forward: bool,
+) -> Float[Array, " batch_size"]:
+    """Helper function to compute log ratio for forward or backward trajectories.
+
+    Args:
+        env: Environment instance
+        traj_data: Trajectory data
+        env_params: Environment parameters
+        is_forward: If True, compute forward trajectory ratio; if False, backward
+
+    Returns:
+        Log ratio for the trajectory
+    """
+    batch_size = traj_data.done.shape[0]
+
+    def flatten_tree(tree):
+        return jax.tree.map(lambda x: x.reshape((-1,) + x.shape[2:]), tree)
+
+    states = jax.tree.map(lambda x: x[:, :-1], traj_data.state)
+    states = flatten_tree(states)
+    if is_forward:
+        # Forward trajectory: states -> next_states
+        next_states = jax.tree.map(lambda x: x[:, 1:], traj_data.state)
+        next_states = flatten_tree(next_states)
+
+        forward_logits = flatten_tree(traj_data.info["forward_logits"][:, :-1])
+        backward_logits = flatten_tree(traj_data.info["backward_logits"][:, 1:])
+
+        fwd_actions = flatten_tree(jax.tree.map(lambda x: x[:, :-1], traj_data.action))
+        bwd_actions = env.get_backward_action(states, fwd_actions, next_states, env_params)
+
+        fwd_action_mask = env.get_invalid_mask(states, env_params)
+        bwd_action_mask = env.get_invalid_backward_mask(next_states, env_params)
+    else:
+        # Backward trajectory: states <- prev_states
+        prev_states = jax.tree.map(lambda x: x[:, 1:], traj_data.state)
+        prev_states = flatten_tree(prev_states)
+
+        forward_logits = flatten_tree(traj_data.info["forward_logits"][:, 1:])
+        backward_logits = flatten_tree(traj_data.info["backward_logits"][:, :-1])
+
+        bwd_actions = flatten_tree(jax.tree.map(lambda x: x[:, :-1], traj_data.action))
+        fwd_actions = env.get_forward_action(states, bwd_actions, prev_states, env_params)
+
+        bwd_action_mask = env.get_invalid_backward_mask(states, env_params)
+        fwd_action_mask = env.get_invalid_mask(prev_states, env_params)
+
+    # Compute forward log probabilities
+    forward_logits = mask_logits(forward_logits, fwd_action_mask)
+    forward_logprobs = jax.nn.log_softmax(forward_logits)
+    sampled_forward_logprobs = jnp.take_along_axis(
+        forward_logprobs, fwd_actions[..., None], axis=-1
+    ).squeeze(-1)
+
+    # Compute backward log probabilities
+    backward_logits = mask_logits(backward_logits, bwd_action_mask)
+    backward_logprobs = jax.nn.log_softmax(backward_logits)
+    sampled_backward_logprobs = jnp.take_along_axis(
+        backward_logprobs, bwd_actions[..., None], axis=-1
+    ).squeeze(-1)
+
+    log_ratio = sampled_forward_logprobs - sampled_backward_logprobs
+    log_ratio_traj = (log_ratio.reshape(batch_size, -1) * (1.0 - traj_data.pad[:, :-1])).sum(
+        axis=-1
     )
+    return log_ratio_traj
+
+
+def forward_trajectory_log_ratio(
+    env: TEnvironment,
+    fwd_traj_data: TrajectoryData,
+    env_params: TEnvParams,
+) -> Float[Array, " batch_size"]:
+    """Compute the log (PF(tau) / PB(tau)) of the forward trajectory.
+
+    Args:
+        env (TEnvironment): The environment instance.
+        fwd_traj_data (TrajectoryData): A trajectory containing observations,
+            states, actions, and other data with shape [B x T x ...] where B is
+            batch size and T is trajectory length.
+        env_params (TEnvParams): Parameters for the environment.
+
+    Returns:
+        Float[Array, " batch_size"]: Log ratio of the forward trajectory.
+    """
+    return _compute_trajectory_log_ratio(env, fwd_traj_data, env_params, is_forward=True)
+
+
+def backward_trajectory_log_ratio(
+    env: TEnvironment,
+    bwd_traj_data: TrajectoryData,
+    env_params: TEnvParams,
+) -> Float[Array, " batch_size"]:
+    """Compute the log (PF(tau) / PB(tau)) of the backward trajectory.
+
+    Args:
+        env (TEnvironment): The environment instance.
+        bwd_traj_data (TrajectoryData): A trajectory containing observations,
+            states, actions, and other data with shape [B x T x ...] where B is
+            batch size and T is trajectory length.
+        env_params (TEnvParams): Parameters for the environment.
+
+    Returns:
+        Float[Array, " batch_size"]: Log ratio of the backward trajectory.
+    """
+    return _compute_trajectory_log_ratio(env, bwd_traj_data, env_params, is_forward=False)

@@ -10,9 +10,7 @@ from ..environment import (
 )
 
 
-class GeneralHypergridRewardModule(
-    BaseRewardModule[HypergridEnvState, HypergridEnvParams]
-):
+class GeneralHypergridRewardModule(BaseRewardModule[HypergridEnvState, HypergridEnvParams]):
     def __init__(self, R0: float = 1e-3, R1: float = 0.5, R2: float = 2.0):
         """
         General reward function for hypegrids, defined as
@@ -30,14 +28,10 @@ class GeneralHypergridRewardModule(
         self.R2 = R2
         self.min_reward = 1e-6  # TODO: Make this a parameter
 
-    def init(
-        self, rng_key: chex.PRNGKey, dummy_state: HypergridEnvState
-    ) -> None:
+    def init(self, rng_key: chex.PRNGKey, dummy_state: HypergridEnvState) -> None:
         return None  # No parameters needed to jit
 
-    def reward(
-        self, state: HypergridEnvState, env_params: HypergridEnvParams
-    ) -> TReward:
+    def reward(self, state: HypergridEnvState, env_params: HypergridEnvParams) -> TReward:
         state = state.state
         ax = jnp.abs(state / (env_params.side - 1) - 0.5)
         reward = (
@@ -48,9 +42,7 @@ class GeneralHypergridRewardModule(
         chex.assert_shape(reward, (state.shape[0],))  # [B]
         return jnp.clip(reward, min=self.min_reward)
 
-    def log_reward(
-        self, state: HypergridEnvState, env_params: HypergridEnvParams
-    ) -> TLogReward:
+    def log_reward(self, state: HypergridEnvState, env_params: HypergridEnvParams) -> TLogReward:
         return jnp.log(self.reward(state, env_params))
 
 

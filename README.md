@@ -13,3 +13,14 @@ To install packages for algorithms, use
 ```
 
 TODO: Establish right depenencies everywhere.
+
+## Documentation
+
+To have an access to a local documentation, use the following commands:
+```
+pip install mkdocs mkdocs-material
+pip install "mkdocstrings[python]"
+cd gfnx-docs
+mkdocs serve
+```
+Afterwards, you have an access to documentation via localhost.

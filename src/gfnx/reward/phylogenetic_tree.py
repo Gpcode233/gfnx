@@ -6,9 +6,7 @@ from ..base import BaseRewardModule, TLogReward, TReward, TRewardParams
 from ..environment import PhyloTreeEnvParams, PhyloTreeEnvState
 
 
-class PhyloTreeRewardModule(
-    BaseRewardModule[PhyloTreeEnvState, PhyloTreeEnvParams]
-):
+class PhyloTreeRewardModule(BaseRewardModule[PhyloTreeEnvState, PhyloTreeEnvParams]):
     """
     Reward module for phylogenetic trees using exponential reward function.
     R(x) = exp((offset - total_mutations) / scale)
@@ -22,9 +20,7 @@ class PhyloTreeRewardModule(
         # TODO: check delta score in original paper
         self._offset = (C / scale) / num_nodes
 
-    def init(
-        self, rng_key: chex.PRNGKey, dummy_state: PhyloTreeEnvState
-    ) -> TRewardParams:
+    def init(self, rng_key: chex.PRNGKey, dummy_state: PhyloTreeEnvState) -> TRewardParams:
         """Initialize reward parameters"""
         return {}  # No parameters for this reward
 
@@ -50,9 +46,7 @@ class PhyloTreeRewardModule(
             )
             return carry + mutations, None
 
-        return jax.lax.scan(
-            compute_mutations, 0.0, jnp.arange(2 * self.num_nodes - 1)
-        )[0]
+        return jax.lax.scan(compute_mutations, 0.0, jnp.arange(2 * self.num_nodes - 1))[0]
 
     def delta_score(self, state: PhyloTreeEnvState) -> TReward:
         """Compute delta score"""

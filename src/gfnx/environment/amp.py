@@ -9,9 +9,7 @@ from .sequence import (
 
 class AMPEnvironment(AutoregressiveSequenceEnvironment):
     def __init__(self, reward_module: TRewardModule) -> None:
-        self.char_to_id = {
-            char: i for i, char in enumerate(PROTEINS_FULL_ALPHABET)
-        }
+        self.char_to_id = {char: i for i, char in enumerate(PROTEINS_FULL_ALPHABET)}
 
         super().__init__(
             reward_module,
@@ -22,7 +20,7 @@ class AMPEnvironment(AutoregressiveSequenceEnvironment):
             eos_token=self.char_to_id["[EOS]"],
             pad_token=self.char_to_id["[PAD]"],
         )
-    
+
     @property
     def name(self) -> str:
         """Environment name."""

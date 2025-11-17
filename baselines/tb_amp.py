@@ -20,7 +20,6 @@ import equinox as eqx
 import hydra
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 import orbax.checkpoint as ocp
 from jax_tqdm import loop_tqdm

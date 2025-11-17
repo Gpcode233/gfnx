@@ -17,15 +17,12 @@ class MetricState:
 
     pass
 
-
 class BaseMetricModule(Generic[TEnvState, TEnvParams, TMetricState]):
     """
     Base class for metric implementations
     """
 
-    def init(
-        self, rng_key: chex.PRNGKey, env_params: TEnvParams
-    ) -> TMetricState:
+    def init(self, rng_key: chex.PRNGKey, env_params: TEnvParams) -> TMetricState:
         raise NotImplementedError
 
     def update(

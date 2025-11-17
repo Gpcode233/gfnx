@@ -4,6 +4,7 @@ TODO: Do we really need it? How we can use it?
 """
 
 import collections
+from abc import ABC, abstractmethod
 from typing import Any, Sequence, Union
 
 import chex
@@ -11,12 +12,14 @@ import jax
 import jax.numpy as jnp
 
 
-class Space:
+class Space(ABC):
     """Minimal jittable class for abstract gymnax space."""
 
+    @abstractmethod
     def sample(self, rng: chex.PRNGKey) -> chex.Array:
         raise NotImplementedError
 
+    @abstractmethod
     def contains(self, x: Any) -> Any:
         raise NotImplementedError
 
@@ -32,9 +35,9 @@ class Discrete(Space):
 
     def sample(self, rng: chex.PRNGKey) -> chex.Array:
         """Sample random action uniformly from set of categorical choices."""
-        return jax.random.randint(
-            rng, shape=self.shape, minval=0, maxval=self.n
-        ).astype(self.dtype)
+        return jax.random.randint(rng, shape=self.shape, minval=0, maxval=self.n).astype(
+            self.dtype
+        )
 
     def contains(self, x: int) -> jnp.ndarray:
         """Check whether specific object is within space."""
@@ -61,17 +64,15 @@ class Box(Space):
 
     def sample(self, rng: chex.PRNGKey) -> chex.Array:
         """Sample random action uniformly from 1D continuous range."""
-        return jax.random.uniform(
-            rng, shape=self.shape, minval=self.low, maxval=self.high
-        ).astype(self.dtype)
+        return jax.random.uniform(rng, shape=self.shape, minval=self.low, maxval=self.high).astype(
+            self.dtype
+        )
 
     def contains(self, x: chex.Array) -> jnp.ndarray:
         """Check whether specific object is within space."""
         # type_cond = isinstance(x, self.dtype)
         # shape_cond = (x.shape == self.shape)
-        range_cond = jnp.logical_and(
-            jnp.all(x >= self.low), jnp.all(x <= self.high)
-        )
+        range_cond = jnp.logical_and(jnp.all(x >= self.low), jnp.all(x <= self.high))
         return range_cond
 
 
@@ -86,8 +87,7 @@ class Dict(Space):
         """Sample random action from all subspaces."""
         key_split = jax.random.split(rng, self.num_spaces)
         return collections.OrderedDict([
-            (k, self.spaces[k].sample(key_split[i]))
-            for i, k in enumerate(self.spaces)
+            (k, self.spaces[k].sample(key_split[i])) for i, k in enumerate(self.spaces)
         ])
 
     def contains(self, x: Any) -> bool:
@@ -111,9 +111,7 @@ class Tuple(Space):
     def sample(self, rng: chex.PRNGKey) -> Any:  # Tuple[chex.Array]:
         """Sample random action from all subspaces."""
         key_split = jax.random.split(rng, self.num_spaces)
-        return tuple([
-            s.sample(key_split[i]) for i, s in enumerate(self.spaces)
-        ])
+        return tuple([s.sample(key_split[i]) for i, s in enumerate(self.spaces)])
 
     def contains(self, x: Sequence) -> bool:
         """Check whether dimensions of object are within subspace."""

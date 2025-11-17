@@ -99,16 +99,14 @@ class GNNPolicy(eqx.Module):
             weight=truncated_normal(global_emb_key, (1, emb_size))
         )
         self.node_mlp = eqx.nn.MLP(
-            in_size=4
-            * emb_size,  # concat [Nodes, Senders, Receivers, Globals]
+            in_size=4 * emb_size,  # concat [Nodes, Senders, Receivers, Globals]
             out_size=emb_size,
             width_size=emb_size,
             depth=mlp_num_layers,
             key=node_mlp_key,
         )
         self.edge_mlp = eqx.nn.MLP(
-            in_size=4
-            * emb_size,  # concat [Edges, Senders, Receivers, Globals]
+            in_size=4 * emb_size,  # concat [Edges, Senders, Receivers, Globals]
             out_size=emb_size,
             width_size=emb_size,
             depth=mlp_num_layers,
@@ -142,9 +140,7 @@ class GNNPolicy(eqx.Module):
             update_edge_fn=update_edge_fn,
             update_global_fn=update_global_fn,
         )
-        self.attention_proj = eqx.nn.Linear(
-            emb_size, emb_size * 3, key=self_attention_proj_key
-        )
+        self.attention_proj = eqx.nn.Linear(emb_size, emb_size * 3, key=self_attention_proj_key)
         self.attention = eqx.nn.MultiheadAttention(
             num_heads=num_heads,
             query_size=emb_size,
@@ -180,21 +176,13 @@ class GNNPolicy(eqx.Module):
         )
 
     def __call__(self, adjacency: chex.Array) -> chex.Array:
-        batch_size, num_variables, num_variables = (
-            adjacency.shape
-        )  # Batch, Nodes
+        batch_size, num_variables, num_variables = adjacency.shape  # Batch, Nodes
         # Convert batch of adjacency matrices to a graph tuple
         graph_tuple = self._to_graph_tuple(adjacency)
         features = graph_tuple._replace(
-            nodes=jax.vmap(self.node_embeddings, in_axes=(0,))(
-                graph_tuple.nodes
-            ),
-            edges=jax.vmap(self.edge_embeddings, in_axes=(0,))(
-                graph_tuple.edges
-            ),
-            globals=jax.vmap(self.global_embeddings, in_axes=(0,))(
-                graph_tuple.globals
-            ),
+            nodes=jax.vmap(self.node_embeddings, in_axes=(0,))(graph_tuple.nodes),
+            edges=jax.vmap(self.edge_embeddings, in_axes=(0,))(graph_tuple.edges),
+            globals=jax.vmap(self.global_embeddings, in_axes=(0,))(graph_tuple.globals),
         )
 
         for _ in range(self.num_layers):
@@ -212,36 +200,22 @@ class GNNPolicy(eqx.Module):
             )
 
         # Self-attention layer
-        node_features = jax.vmap(self.attention_proj, in_axes=(0,))(
-            features.nodes
-        )
+        node_features = jax.vmap(self.attention_proj, in_axes=(0,))(features.nodes)
         node_features = node_features[: batch_size * num_variables].reshape(
             batch_size, num_variables, -1
         )  # Exclude padding and reshape
         q, k, v = jnp.split(node_features, 3, axis=-1)
         node_features = jax.vmap(self.attention, in_axes=(0, 0, 0))(q, k, v)
-        node_features = node_features.reshape(
-            batch_size * num_variables, -1
-        )  # [B * N, emb_size]
-        node_features = jax.vmap(self.post_attention_nodes_norm, in_axes=(0))(
-            node_features
+        node_features = node_features.reshape(batch_size * num_variables, -1)  # [B * N, emb_size]
+        node_features = jax.vmap(self.post_attention_nodes_norm, in_axes=(0))(node_features)
+        global_features = jax.vmap(self.post_attention_globals_norm, in_axes=(0,))(
+            features.globals[:batch_size]
         )
-        global_features = jax.vmap(
-            self.post_attention_globals_norm, in_axes=(0,)
-        )(features.globals[:batch_size])
 
-        senders = jax.vmap(self.senders_mlp, in_axes=(0))(
-            node_features
-        )  # [B*N, emb_size]
-        senders = senders.reshape(
-            batch_size, num_variables, -1
-        )  # [B, N, emb_size]
-        receivers = jax.vmap(self.receivers_mlp, in_axes=(0))(
-            node_features
-        )  # [B*N, emb_size]
-        receivers = receivers.reshape(
-            batch_size, num_variables, -1
-        )  # [B, N, emb_size]
+        senders = jax.vmap(self.senders_mlp, in_axes=(0))(node_features)  # [B*N, emb_size]
+        senders = senders.reshape(batch_size, num_variables, -1)  # [B, N, emb_size]
+        receivers = jax.vmap(self.receivers_mlp, in_axes=(0))(node_features)  # [B*N, emb_size]
+        receivers = receivers.reshape(batch_size, num_variables, -1)  # [B, N, emb_size]
 
         logits = jax.lax.batch_matmul(senders, receivers.transpose(0, 2, 1))
         logits = logits.reshape(batch_size, -1)
@@ -279,22 +253,16 @@ class GNNPolicy(eqx.Module):
         n_edge = jnp.sum(adjacency, axis=(1, 2))
         n_edge = jnp.append(n_edge, size - total_num_edges)  # Padding
 
-        nodes = jnp.tile(
-            jnp.arange(num_variables, dtype=jnp.int32), num_graphs
-        )
+        nodes = jnp.tile(jnp.arange(num_variables, dtype=jnp.int32), num_graphs)
         nodes = jnp.append(nodes, 0)
 
         edges = jnp.zeros((size,), dtype=jnp.int32)
 
         valid_mask = jnp.arange(size) < total_num_edges
         valid_senders = sources + counts * num_variables
-        senders = jnp.where(
-            valid_mask, valid_senders, num_graphs * num_variables
-        )
+        senders = jnp.where(valid_mask, valid_senders, num_graphs * num_variables)
         valid_receivers = targets + counts * num_variables
-        receivers = jnp.where(
-            valid_mask, valid_receivers, num_graphs * num_variables
-        )
+        receivers = jnp.where(valid_mask, valid_receivers, num_graphs * num_variables)
 
         globals = jnp.zeros((num_graphs + 1,), dtype=jnp.int32)
 
@@ -332,16 +300,12 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 1. Generate a batch of trajectories and split to transitions
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
-    policy_params, policy_static = eqx.partition(
-        train_state.model, eqx.is_array
-    )
+    policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
     cur_eps = train_state.exploration_schedule(idx)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
-    def fwd_policy_fn(
-        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params
-    ) -> chex.Array:
+    def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = policy(env_obs)
         logits = policy_outputs["forward_logits"]
@@ -349,9 +313,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Apply the exploration schedule
         rng_key, exploration_key = jax.random.split(rng_key)
         batch_size, _ = logits.shape
-        exploration_mask = jax.random.bernoulli(
-            exploration_key, cur_eps, (batch_size,)
-        )
+        exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
         logits = jnp.where(exploration_mask[..., None], 0, logits)
         return logits, policy_outputs
 
@@ -391,24 +353,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Compute the stats for the next state
         next_policy_outputs = model(transitions.next_obs)
         next_fwd_logits = next_policy_outputs["forward_logits"]
-        next_fwd_invalid_mask = env.get_invalid_mask(
-            transitions.next_state, env_params
-        )
-        masked_next_fwd_logits = gfnx.utils.mask_logits(
-            next_fwd_logits, next_fwd_invalid_mask
-        )
-        next_fwd_all_log_probs = jax.nn.log_softmax(
-            masked_next_fwd_logits, axis=-1
-        )
+        next_fwd_invalid_mask = env.get_invalid_mask(transitions.next_state, env_params)
+        masked_next_fwd_logits = gfnx.utils.mask_logits(next_fwd_logits, next_fwd_invalid_mask)
+        next_fwd_all_log_probs = jax.nn.log_softmax(masked_next_fwd_logits, axis=-1)
         next_sink_logprobs = next_fwd_all_log_probs[:, -1]
 
         bwd_logits = next_policy_outputs["backward_logits"]
-        next_bwd_invalid_mask = env.get_invalid_backward_mask(
-            transitions.next_state, env_params
-        )
-        masked_bwd_logits = gfnx.utils.mask_logits(
-            bwd_logits, next_bwd_invalid_mask
-        )
+        next_bwd_invalid_mask = env.get_invalid_backward_mask(transitions.next_state, env_params)
+        masked_bwd_logits = gfnx.utils.mask_logits(bwd_logits, next_bwd_invalid_mask)
         bwd_all_log_probs = jax.nn.log_softmax(masked_bwd_logits, axis=-1)
         bwd_logprobs = jnp.take_along_axis(
             bwd_all_log_probs, jnp.expand_dims(bwd_actions, axis=-1), axis=-1
@@ -431,9 +383,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         ).mean()
         return loss, log_info
 
-    (mean_loss, log_info), grads = eqx.filter_value_and_grad(
-        loss_fn, has_aux=True
-    )(train_state.model)
+    (mean_loss, log_info), grads = eqx.filter_value_and_grad(loss_fn, has_aux=True)(
+        train_state.model
+    )
     # Step 3. Update the model with grads
     updates, opt_state = train_state.optimizer.update(
         grads,
@@ -443,9 +395,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     model = eqx.apply_updates(train_state.model, updates)
     # Peform all the requied logging
     metric_state = {
-        key: module.update(
-            train_state.metrics[key], log_info["final_env_state"], env_params
-        )
+        key: module.update(train_state.metrics[key], log_info["final_env_state"], env_params)
         for key, module in train_state.metrics_module.items()
     }
 
@@ -518,9 +468,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     eval_init_key = jax.random.PRNGKey(cfg.eval_seed)
 
     # Load the samples
-    train_samples = gfnx.utils.load_dag_samples(
-        cfg.environment.train_samples_path
-    )
+    train_samples = gfnx.utils.load_dag_samples(cfg.environment.train_samples_path)
     # Define the reward function for the environment
     if cfg.environment.prior.type == "uniform":
         prior = gfnx.reward.UniformDAGPrior(
@@ -544,9 +492,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             alpha_w=cfg.environment.likelihood.alpha_w,
         )
     else:
-        raise ValueError(
-            f"Unknown likelihood type: {cfg.environment.likelihood.type}"
-        )
+        raise ValueError(f"Unknown likelihood type: {cfg.environment.likelihood.type}")
     reward_module = gfnx.DAGRewardModule(prior=prior, likelihood=likelihood)
 
     # Initialize the environment and its inner parameters
@@ -579,9 +525,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
 
-    def bwd_policy_fn(
-        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params
-    ) -> chex.Array:
+    def bwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         del rng_key
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = policy(env_obs)
@@ -614,9 +558,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         metrics=metrics_state,
     )
     # Split train state into parameters and static parts to make jit work.
-    train_state_params, train_state_static = eqx.partition(
-        train_state, eqx.is_array
-    )
+    train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
 
     @functools.partial(jax.jit, donate_argnums=(1,))
     @loop_tqdm(cfg.num_train_steps, print_rate=cfg.logging["tqdm_print_rate"])
@@ -634,9 +576,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             project=cfg.wandb.project,
             tags=["MDB", env.name.upper()],
         )
-        wandb.config.update(
-            OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-        )
+        wandb.config.update(OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True))
 
     log.info("Start training")
     # Run the training loop via jax.lax.fori_loop

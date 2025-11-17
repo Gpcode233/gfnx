@@ -31,16 +31,12 @@ class EqxProxyAMPRewardModule(BaseRewardModule[AMPEnvState, AMPEnvParams]):
             module_path = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "..", "..", "..")
             )
-            self.pretrained_proxy_path = os.path.join(
-                module_path, self.pretrained_proxy_path
-            )
+            self.pretrained_proxy_path = os.path.join(module_path, self.pretrained_proxy_path)
 
         self.reward_exponent = reward_exponent
         self.min_reward = min_reward
 
-    def init(
-        self, rng_key: chex.PRNGKey, dummy_state: AMPEnvState
-    ) -> TRewardParams:
+    def init(self, rng_key: chex.PRNGKey, dummy_state: AMPEnvState) -> TRewardParams:
         # Lazy imports to avoid importing equinox in the main module
         import equinox as eqx
         import orbax.checkpoint as ocp
@@ -57,9 +53,7 @@ class EqxProxyAMPRewardModule(BaseRewardModule[AMPEnvState, AMPEnvParams]):
             key=rng_key,
         )
 
-        abstract_model = jax.tree_util.tree_map(
-            ocp.utils.to_shape_dtype_struct, model
-        )
+        abstract_model = jax.tree_util.tree_map(ocp.utils.to_shape_dtype_struct, model)
         model = ckptr.restore(self.pretrained_proxy_path, abstract_model)
         model_params, model_static = eqx.partition(model, eqx.is_array)
         self.model_static = model_static
@@ -67,21 +61,15 @@ class EqxProxyAMPRewardModule(BaseRewardModule[AMPEnvState, AMPEnvParams]):
 
         return {"model_params": model_params}
 
-    def log_reward(
-        self, state: AMPEnvState, env_params: AMPEnvParams
-    ) -> TLogReward:
+    def log_reward(self, state: AMPEnvState, env_params: AMPEnvParams) -> TLogReward:
         return jnp.log(self.reward(state, env_params))
 
     def reward(self, state: AMPEnvState, env_params: AMPEnvParams) -> TReward:
         # Lazy imports to avoid importing equinox in the main module
         import equinox as eqx
 
-        model = eqx.combine(
-            env_params.reward_params["model_params"], self.model_static
-        )
-        reward = jax.vmap(lambda x: model(x, enable_dropout=False, key=None))(
-            state.tokens
-        )
+        model = eqx.combine(env_params.reward_params["model_params"], self.model_static)
+        reward = jax.vmap(lambda x: model(x, enable_dropout=False, key=None))(state.tokens)
         reward = jnp.clip(
             jnp.pow(jax.nn.sigmoid(reward), self.reward_exponent),
             min=self.min_reward,

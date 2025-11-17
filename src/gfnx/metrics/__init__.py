@@ -1,3 +1,5 @@
+from . import new
+
 from .amp import AMPMetricModule, AMPMetricState
 from .bitseq import (
     BitseqCorrelationMetric,
@@ -17,12 +19,15 @@ from .tfbind import TFBindMetricModule, TFBindMetricState
 from .qm9_small import QM9SmallMetricModule, QM9SmallMetricState
 
 __all__ = [
+    "new",
     "AMPMetricModule",
     "AMPMetricState",
     "BitseqCorrelationMetric",
     "BitseqCorrelationState",
     "BitseqNumModesMetric",
     "BitseqNumModesState",
+    "DAGCorrelationMetric",
+    "DAGCorrelationState",
     "GFPMetricModule",
     "GFPMetricState",
     "HypergridMetricState",

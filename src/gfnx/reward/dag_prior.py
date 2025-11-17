@@ -9,9 +9,7 @@ from ..environment import DAGEnvParams, DAGEnvState
 class BaseDAGPrior:
     num_variables: int
 
-    def log_prob(
-        self, state: DAGEnvState, env_params: DAGEnvParams
-    ) -> TLogReward:
+    def log_prob(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
         """Computes log P(G).
 
         Args:
@@ -44,9 +42,7 @@ class BaseDAGPrior:
         Returns:
         - TLogReward, shape [B], batch of log P(G') - log P(G)
         """
-        return self.log_prob(next_state, env_params) - self.log_prob(
-            state, env_params
-        )
+        return self.log_prob(next_state, env_params) - self.log_prob(state, env_params)
 
     @staticmethod
     def num_parents(state: DAGEnvState) -> chex.Array:
@@ -60,9 +56,7 @@ class UniformDAGPrior(BaseDAGPrior):
         # since we only need an unnormalized score in GFlowNets
         self._log_prior = jnp.zeros(num_variables)
 
-    def log_prob(
-        self, state: DAGEnvState, env_params: DAGEnvParams
-    ) -> TLogReward:
+    def log_prob(self, state: DAGEnvState, env_params: DAGEnvParams) -> TLogReward:
         num_parents = self.num_parents(state)
         return jnp.sum(self._log_prior[num_parents], axis=1)  # [B]
 
