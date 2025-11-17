@@ -16,6 +16,11 @@ class DAGRewardParams:
 
 @chex.dataclass
 class DAGRewardModule(BaseRewardModule[DAGEnvState, DAGEnvParams]):
+    '''
+    Reward module for directed acyclic graph (DAG) structures.
+    The reward is defined as the product of a prior over DAGs and a likelihood
+    of data given the DAG.
+    '''
     prior: BaseDAGPrior
     likelihood: BaseDAGLikelihood
 

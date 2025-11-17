@@ -410,7 +410,10 @@ def run_experiment(cfg: OmegaConf) -> None:
     }
 
     optimizer_defs = {
-        "network_lr": optax.adam(learning_rate=cfg.agent.learning_rate),
+        "network_lr": optax.adamw(
+            learning_rate=cfg.agent.learning_rate,
+            weight_decay=cfg.agent.weight_decay
+        ),
         "logZ_lr": optax.adam(learning_rate=cfg.agent.logZ_learning_rate),
     }
     optimizer = optax.multi_transform(optimizer_defs, param_labels)

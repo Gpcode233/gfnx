@@ -143,7 +143,6 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         fwd_rng_key: chex.PRNGKey,
         env_obs: gfnx.TObs,
         current_policy_params,  # current_policy_params are network params
-        train=True,
     ) -> chex.Array:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
@@ -153,15 +152,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         fwd_logits = policy_outputs["forward_logits"]
 
         # Apply epsilon exploration to logits
-        if train:
-            rng_key, exploration_key = jax.random.split(fwd_rng_key)
-            batch_size, _ = fwd_logits.shape
-            exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
-            fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
-        # Update policy outputs with modified logits
-        policy_outputs = policy_outputs.copy()
-        policy_outputs["forward_logits"] = fwd_logits
-
+        batch_size = fwd_logits.shape[0]
+        exploration_mask = jax.random.bernoulli(fwd_rng_key, cur_eps, (batch_size,))
+        fwd_logits = jnp.where(exploration_mask[..., jnp.newaxis], 0, fwd_logits)
         return fwd_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -215,11 +208,12 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         )
 
         # Compute the DB loss with masking
+        num_transition = jnp.logical_not(transitions.pad).sum()
         loss = optax.l2_loss(
             jnp.where(transitions.pad, 0.0, fwd_logprobs + log_flow),
             jnp.where(transitions.pad, 0.0, target),
-        ).mean()
-        return loss
+        ).sum()
+        return loss / num_transition
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads

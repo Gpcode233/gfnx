@@ -8,6 +8,7 @@ num_envs: 16
 agent:
   learning_rate: 1e-3
   logZ_learning_rate: 5e-2
+  weight_decay: 1e-5
   start_eps: 1e-3
   end_eps: 1e-3
   exploration_steps: 50_000 # Should be <= of num_train_steps

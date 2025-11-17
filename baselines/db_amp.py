@@ -110,6 +110,7 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: MultiMetricsModule
     metrics_state: MultiMetricsState
+    exploration_schedule: optax.Schedule
     eval_info: dict
 
 
@@ -123,19 +124,21 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     rng_key, sample_traj_key = jax.random.split(train_state.rng_key)
     # Split the model to pass into forward rollout
     policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
+    cur_eps = train_state.exploration_schedule(idx)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
+        batch_size = env_obs.shape[0]
         rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(
             lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
-        )(env_obs, jax.random.split(rng_key, env_obs.shape[0]))
-        # With probability epsilon, return zero logits and the same policy outputs
-        epsilon = train_state.config.agent.eps_exploration
-        do_explore = jax.random.bernoulli(explore_key, epsilon)
-        zero_logits = jnp.zeros_like(policy_outputs["forward_logits"])
-        forward_logits = jnp.where(do_explore, zero_logits, policy_outputs["forward_logits"])
+        )(env_obs, jax.random.split(rng_key, batch_size))
+        # With probability cur_eps, return zero logits and the same policy outputs
+        do_explore = jax.random.bernoulli(explore_key, cur_eps, shape=(batch_size,))
+        forward_logits = jnp.where(
+            do_explore[..., jnp.newaxis], 0, policy_outputs["forward_logits"]
+        )
         return forward_logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -189,11 +192,12 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         )
 
         # Compute the DB loss with masking
+        num_transition = jnp.logical_not(transitions.pad).sum()
         loss = optax.l2_loss(
             jnp.where(transitions.pad, 0.0, fwd_logprobs + log_flow),
             jnp.where(transitions.pad, 0.0, target),
-        ).mean()
-        return loss
+        ).sum()
+        return loss / num_transition
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads
@@ -325,8 +329,17 @@ def run_experiment(cfg: OmegaConf) -> None:
         },
         key=net_init_key,
     )
+    # Initialize the exploration schedule
+    exploration_schedule = optax.linear_schedule(
+        init_value=cfg.agent.start_eps,
+        end_value=cfg.agent.end_eps,
+        transition_steps=cfg.agent.exploration_steps,
+    )
     # Initialize the optimizer
-    optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
+    optimizer = optax.adamw(
+        learning_rate=cfg.agent.learning_rate,
+        weight_decay=cfg.agent.weight_decay
+    )
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
@@ -369,6 +382,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
+        exploration_schedule=exploration_schedule,
         eval_info=eval_info,
     )
     # Split train state into parameters and static parts to make jit work.

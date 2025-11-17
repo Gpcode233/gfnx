@@ -317,11 +317,12 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # In forward-looking DB, the flow is zero for the terminal state
         next_log_flow = jnp.where(transitions.done, 0.0, next_log_flow)
         target = jax.lax.stop_gradient(bwd_logprobs + next_log_flow + delta_score)
+        num_transition = jnp.logical_not(transitions.pad).sum()
         loss = optax.huber_loss(
             jnp.where(transitions.pad, 0.0, fwd_logprobs + log_flow),
             jnp.where(transitions.pad, 0.0, target),
-        ).mean()
-        return loss
+        ).sum()
+        return loss / num_transition
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads

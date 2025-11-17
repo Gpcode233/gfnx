@@ -115,6 +115,7 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: MultiMetricsModule
     metrics_state: MultiMetricsState
+    exploration_schedule: optax.Schedule
     eval_info: dict
 
 
@@ -130,6 +131,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Step 1. Generate a batch of trajectories
     rng_key, sample_traj_key = jax.random.split(rng_key)
+    cur_epsilon = train_state.exploration_schedule(idx)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout.
     # This function is called per-environment step to get action logits.
@@ -146,13 +148,18 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         current_model = eqx.combine(current_policy_params, policy_static)
 
         num_samples = env_obs.shape[0]
-        dropout_keys = jax.random.split(fwd_rng_key, num_samples)
+        dropout_key, exploration_key = jax.random.split(fwd_rng_key)
+        dropout_keys = jax.random.split(dropout_key, num_samples)
         policy_outputs = jax.vmap(
             lambda obs, dkey: current_model(obs, enable_dropout=True, key=dkey),
             in_axes=(0,0),
         )(env_obs, dropout_keys)
-
-        return policy_outputs["forward_logits"], policy_outputs
+        # Apply epsilon exploration to logits
+        do_explore = jax.random.bernoulli(exploration_key, cur_epsilon, shape=(env_obs.shape[0],))
+        forward_logits = jnp.where(
+            do_explore[..., jnp.newaxis], 0, policy_outputs["forward_logits"]
+        )
+        return forward_logits, policy_outputs
 
     # Generate a batch of trajectories using the defined forward policy.
     # policy_params here are the learnable parameters of train_state.model.
@@ -431,6 +438,12 @@ def run_experiment(cfg: OmegaConf) -> None:
         },
         key=net_init_key,
     )
+    # Initialize the exploration schedule
+    exploration_schedule = optax.linear_schedule(
+        init_value=cfg.agent.start_eps,
+        end_value=cfg.agent.end_eps,
+        transition_steps=cfg.agent.exploration_steps,
+    )
 
     # Initialize logZ separately
     logZ = jnp.array(0.0)
@@ -446,7 +459,10 @@ def run_experiment(cfg: OmegaConf) -> None:
     }
 
     optimizer_defs = {
-        "network_lr": optax.adam(learning_rate=cfg.agent.learning_rate),
+        "network_lr": optax.adamw(
+            learning_rate=cfg.agent.learning_rate,
+            weight_decay=cfg.agent.weight_decay
+        ),
         "logZ_lr": optax.adam(learning_rate=cfg.agent.logZ_learning_rate),
     }
     optimizer = optax.multi_transform(optimizer_defs, param_labels)
@@ -506,6 +522,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
+        exploration_schedule=exploration_schedule,
         eval_info=eval_info,
     )
 

@@ -153,11 +153,12 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
+        batch_size = env_obs.shape[0]
         rng_key, explore_key = jax.random.split(rng_key)
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(
             lambda obs, key: policy(obs, enable_dropout=True, key=key), in_axes=(0, 0)
-        )(env_obs, jax.random.split(rng_key, env_obs.shape[0]))
+        )(env_obs, jax.random.split(rng_key, batch_size))
         # With probability cur_eps, return zero logits and the same policy outputs
         explore_mask = jax.random.bernoulli(explore_key, cur_eps, (env_obs.shape[0],))
         forward_logits = jnp.where(explore_mask[..., None], 0, policy_outputs["forward_logits"])
@@ -410,7 +411,10 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Prepare parameters for Optax
     model_params_init = eqx.filter(model, eqx.is_array)
-    optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
+    optimizer = optax.adamw(
+        learning_rate=cfg.agent.learning_rate,
+        weight_decay=cfg.agent.weight_decay
+    )
     opt_state = optimizer.init(model_params_init)
 
     # Initialize the backward policy function for correlation computation
@@ -511,7 +515,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             log_dir=log_dir,
             entity=cfg.writer.entity,
             project=cfg.writer.project,
-            tags=["TB", env.name.upper()],
+            tags=["SubTB", env.name.upper()],
             config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
         )
 

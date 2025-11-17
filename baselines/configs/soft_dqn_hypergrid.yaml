@@ -12,6 +12,9 @@ agent:
   target_update_every: 1
   target_update_tau: 0.25
   leaf_coeff: 5
+  start_eps: 1e-3
+  end_eps: 1e-3
+  exploration_steps: 1_000
 
 network:
   # Input size and output size are computed based on the environment

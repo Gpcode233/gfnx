@@ -115,6 +115,7 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: ApproxDistributionMetricsModule
     metrics_state: ApproxDistributionMetricsState
+    exploration_schedule: optax.Schedule
     eval_info: dict
 
 
@@ -130,10 +131,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Step 1. Generate a batch of trajectories
     rng_key, sample_traj_key = jax.random.split(rng_key)
+    cur_epsilon = train_state.exploration_schedule(idx)
 
     # Define the policy function suitable for gfnx.utils.forward_rollout
-    # Note: policy_params for this function are only the MLPPolicy's network
-    # parameters
     def fwd_policy_fn(
         fwd_rng_key: chex.PRNGKey,
         env_obs: gfnx.TObs,
@@ -143,7 +143,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
         policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
-        return policy_outputs["forward_logits"], policy_outputs
+        do_explore = jax.random.bernoulli(rng_key, cur_epsilon, shape=(env_obs.shape[0],))
+        forward_logits = jnp.where(
+            do_explore[..., jnp.newaxis], 0, policy_outputs["forward_logits"]
+        )
+        return forward_logits, policy_outputs
 
     traj_data, aux_info = gfnx.utils.forward_rollout(
         rng_key=sample_traj_key,
@@ -155,8 +159,6 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
 
     # Step 2. Compute the loss
-    # loss_fn now takes combined parameters (model_params and logZ)
-    # It also needs static parts of the model to reconstruct it.
     def loss_fn(
         current_all_params: dict,
         static_model_parts: MLPPolicy,
@@ -384,7 +386,12 @@ def run_experiment(cfg: OmegaConf) -> None:
         depth=cfg.network.depth,
         rng_key=net_init_key,
     )
-
+    # Initialize the exploration schedule
+    exploration_schedule = optax.linear_schedule(
+        init_value=cfg.agent.start_eps,
+        end_value=cfg.agent.end_eps,
+        transition_steps=cfg.agent.exploration_steps,
+    )
     # Prepare parameters for Optax
     model_params_init = eqx.filter(model, eqx.is_array)
     optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
@@ -412,6 +419,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
+        exploration_schedule=exploration_schedule,
         eval_info=eval_info,
     )
 
@@ -443,7 +451,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             log_dir=log_dir,
             entity=cfg.writer.entity,
             project=cfg.writer.project,
-            tags=["TB", env.name.upper()],
+            tags=["SubTB", env.name.upper()],
             config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
         )
 

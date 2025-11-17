@@ -143,7 +143,6 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         fwd_rng_key: chex.PRNGKey,
         env_obs: gfnx.TObs,
         current_policy_params,  # current_policy_params are network params
-        train=True,
     ) -> chex.Array:
         # Recombine the network parameters with the static parts of the model
         current_model = eqx.combine(current_policy_params, policy_static)
@@ -153,11 +152,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         fwd_logits = policy_outputs["forward_logits"]
 
         # Apply epsilon exploration to logits
-        if train:
-            rng_key, exploration_key = jax.random.split(fwd_rng_key)
-            batch_size, _ = fwd_logits.shape
-            exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
-            fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
+        batch_size, _ = fwd_logits.shape
+        exploration_mask = jax.random.bernoulli(fwd_rng_key, cur_eps, (batch_size,))
+        fwd_logits = jnp.where(exploration_mask[..., jnp.newaxis], 0, fwd_logits)
         # Update policy outputs with modified logits
         policy_outputs = policy_outputs.copy()
         policy_outputs["forward_logits"] = fwd_logits
@@ -484,7 +481,7 @@ def run_experiment(cfg: OmegaConf) -> None:
             log_dir=log_dir,
             entity=cfg.writer.entity,
             project=cfg.writer.project,
-            tags=["TB", env.name.upper()],
+            tags=["SubTB", env.name.upper()],
             config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
         )
 

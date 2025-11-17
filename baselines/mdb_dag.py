@@ -320,9 +320,9 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
         # Apply the exploration schedule
         rng_key, exploration_key = jax.random.split(rng_key)
-        batch_size, _ = logits.shape
+        batch_size = logits.shape[0]
         exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
-        logits = jnp.where(exploration_mask[..., None], 0, logits)
+        logits = jnp.where(exploration_mask[..., jnp.newaxis], 0, logits)
         return logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -381,6 +381,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         )
 
         # Compute the DB loss with masking
+        num_transition = jnp.logical_not(transitions.pad).sum()
         loss = optax.l2_loss(
             jnp.where(transitions.pad, 0.0, next_sink_logprobs + fwd_logprobs),
             jnp.where(
@@ -388,8 +389,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
                 0.0,
                 sink_logprobs + bwd_logprobs + delta_score,
             ),
-        ).mean()
-        return loss
+        ).sum()
+        return loss / num_transition
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads

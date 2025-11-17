@@ -107,6 +107,7 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: ApproxDistributionMetricsModule
     metrics_state: ApproxDistributionMetricsState
+    exploration_schedule: optax.Schedule
     eval_info: dict
 
 @eqx.filter_jit
@@ -121,6 +122,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Split the model to pass into forward rollout
     policy_params, policy_static = eqx.partition(train_state.model, eqx.is_array)
 
+    cur_epsilon = train_state.exploration_schedule(idx)
+
     def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         policy = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(policy, in_axes=(0,))(env_obs)
@@ -128,6 +131,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             fwd_logits = policy_outputs["unmasked_advantage_logits"]
         else:
             fwd_logits = policy_outputs["raw_qvalue_logits"]
+        do_explore = jax.random.bernoulli(rng_key, cur_epsilon, shape=(env_obs.shape[0],))
+        fwd_logits = jnp.where(do_explore[..., jnp.newaxis], 0, fwd_logits)
         return fwd_logits, policy_outputs
 
     traj_data, log_info = gfnx.utils.forward_rollout(
@@ -355,9 +360,15 @@ def run_experiment(cfg: OmegaConf) -> None:
         depth=cfg.network.depth,
         rng_key=net_init_key,
     )
-    import copy
-    target_model = copy.deepcopy(model)
-
+    model_params, model_static  = eqx.partition(model, eqx.is_array)
+    target_model_params = jax.tree_util.tree_map(jnp.copy, model_params)
+    target_model = eqx.combine(target_model_params, model_static)
+    # Initialize the exploration schedule
+    exploration_schedule = optax.linear_schedule(
+        init_value=cfg.agent.start_eps,
+        end_value=cfg.agent.end_eps,
+        transition_steps=cfg.agent.exploration_steps,
+    )
     # Initialize the optimizer
     optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
@@ -385,6 +396,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
+        exploration_schedule=exploration_schedule,
         eval_info=eval_info,
     )
     # Split train state into parameters and static parts to make jit work.
