@@ -1,3 +1,4 @@
+from itertools import product
 from math import prod
 from typing import Any, Dict, Tuple
 
@@ -69,6 +70,39 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
     def max_steps_in_episode(self) -> int:
         return self.dim * self.side
 
+    @property
+    def is_topologically_sortable(self) -> bool:
+        return True
+
+    def get_topological_sort(self) -> EnvState:
+        """Returns the topological sort of states."""
+
+        all_states_coords = jnp.array(list(product(range(self.side), repeat=self.dim)))
+        sorted_indices = jnp.argsort(all_states_coords.sum(axis=1))
+        sorted_states_coords = all_states_coords[sorted_indices]
+
+        num_states = sorted_states_coords.shape[0]
+        time = sorted_states_coords.sum(axis=1)
+        is_initial = time == 0
+        is_terminal = jnp.zeros(num_states, dtype=jnp.bool)
+        is_pad = jnp.zeros(num_states, dtype=jnp.bool)
+
+        return EnvState(
+            state=sorted_states_coords,
+            time=time,
+            is_terminal=is_terminal,
+            is_initial=is_initial,
+            is_pad=is_pad,
+        )
+
+    def state_to_index(self, state: EnvState) -> chex.Array:
+        # Safe flattening under JIT; avoid raise-mode bounds checks
+        return jnp.ravel_multi_index(
+            state.state.astype(jnp.int32),
+            dims=(self.side,) * self.dim,
+            mode="clip",
+        )
+
     def _single_transition(
         self,
         state: EnvState,
@@ -118,7 +152,18 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         def get_state_initial() -> EnvState:
             return state.replace(is_pad=True)
 
-        def get_state_non_initial() -> EnvState:
+        def undo_stop() -> EnvState:
+            # First backward step from a terminal state: just undo the stop action
+            return EnvState(
+                state=state.state,
+                time=time - 1,
+                is_terminal=False,
+                is_initial=jnp.all(state.state == 0),
+                is_pad=False,
+            )
+
+        def dec_dim() -> EnvState:
+            # Standard backward step on a non-terminal state: decrement the chosen dimension
             prev_inner_state = state.state.at[backward_action].add(-1)
             return EnvState(
                 state=prev_inner_state,
@@ -127,6 +172,9 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
                 is_initial=jnp.all(prev_inner_state == 0),
                 is_pad=False,
             )
+
+        def get_state_non_initial() -> EnvState:
+            return jax.lax.cond(state.is_terminal, undo_stop, dec_dim)
 
         prev_state = jax.lax.cond(is_initial, get_state_initial, get_state_non_initial)
         return prev_state, prev_state.is_initial, {}
@@ -289,3 +337,47 @@ class HypergridEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
         """
         rewards = self._get_states_rewards(env_params)
         return rewards.sum()
+
+    @property
+    def is_ground_truth_sampling_tractable(self) -> bool:
+        """Whether this environment supports tractable sampling from the GT distribution."""
+        return True
+
+    def get_ground_truth_sampling(
+        self, rng_key: chex.PRNGKey, batch_size: int, env_params: EnvParams
+    ) -> EnvState:
+        """
+        Returns a batch of states sampled from the ground truth distribution.
+
+        The ground truth distribution is proportional to the rewards of terminal states.
+
+        Args:
+            rng_key: JAX random key for sampling.
+            batch_size: Number of samples to generate.
+            env_params: Environment parameters.
+
+        Returns:
+            A batch of ground-truth sampled states.
+        """
+        true_distribution = self.get_true_distribution(env_params)
+        flat_distribution = true_distribution.flatten()
+
+        sampled_indices = jax.random.choice(
+            rng_key,
+            a=flat_distribution.size,
+            shape=(batch_size,),
+            p=flat_distribution,
+        )
+
+        sampled_coords_unstacked = jnp.unravel_index(
+            sampled_indices, shape=true_distribution.shape
+        )
+        sampled_coords = jnp.stack(sampled_coords_unstacked, axis=1)
+
+        return EnvState(
+            state=sampled_coords,
+            time=sampled_coords.sum(axis=1),
+            is_terminal=jnp.ones((batch_size,), dtype=jnp.bool),
+            is_initial=jnp.zeros((batch_size,), dtype=jnp.bool),
+            is_pad=jnp.zeros((batch_size,), dtype=jnp.bool),
+        )

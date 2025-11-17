@@ -26,7 +26,15 @@ from jax_tqdm import loop_tqdm
 from omegaconf import OmegaConf
 
 import gfnx
-from gfnx.metrics.new import ApproxDistributionMetricsModule, ApproxDistributionMetricsState
+from gfnx.metrics.new import (
+    ApproxDistributionMetricsModule,
+    ELBOMetricsModule,
+    EUBOMetricsModule,
+    ExactDistributionMetricsModule,
+    MultiMetricsModule,
+    MultiMetricsState,
+)
+
 
 from utils.logger import Writer
 from utils.checkpoint import save_checkpoint
@@ -107,11 +115,12 @@ class TrainState(NamedTuple):
     env: gfnx.HypergridEnvironment
     env_params: chex.Array
     model: MLPPolicy
+    exploration_schedule: optax.Schedule
     logZ: chex.Array  # Added logZ here
     optimizer: optax.GradientTransformation
     opt_state: optax.OptState
-    metrics_module: ApproxDistributionMetricsModule
-    metrics_state: ApproxDistributionMetricsState
+    metrics_module: MultiMetricsModule
+    metrics_state: MultiMetricsState
     eval_info: dict
 
 
@@ -128,19 +137,24 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     # Step 1. Generate a batch of trajectories
     rng_key, sample_traj_key = jax.random.split(rng_key)
 
+    # Get epsilon exploration value from config
+    cur_eps = train_state.exploration_schedule(idx)
+
     # Define the policy function suitable for gfnx.utils.forward_rollout
     # Note: policy_params for this function are only the MLPPolicy's network
     # parameters
-    def fwd_policy_fn(
-        fwd_rng_key: chex.PRNGKey,
-        env_obs: gfnx.TObs,
-        current_policy_params,  # current_policy_params are network params
-    ) -> chex.Array:
-        del fwd_rng_key
+    def fwd_policy_fn(rng_key: chex.PRNGKey, env_obs: gfnx.TObs, policy_params) -> chex.Array:
         # Recombine the network parameters with the static parts of the model
-        current_model = eqx.combine(current_policy_params, policy_static)
+        current_model = eqx.combine(policy_params, policy_static)
         policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
-        return policy_outputs["forward_logits"], policy_outputs
+        fwd_logits = policy_outputs["forward_logits"]
+
+        # Apply epsilon exploration to logits
+        rng_key, exploration_key = jax.random.split(rng_key)
+        batch_size, _ = fwd_logits.shape
+        exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
+        fwd_logits = jnp.where(exploration_mask[..., None], 0, fwd_logits)
+        return fwd_logits, policy_outputs
 
     traj_data, aux_info = gfnx.utils.forward_rollout(
         rng_key=sample_traj_key,
@@ -264,7 +278,16 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     metrics_state = train_state.metrics_module.update(
         train_state.metrics_state,
         rng_key=jax.random.key(0),  # This key is not used in the update method
-        args=train_state.metrics_module.UpdateArgs(states=aux_info["final_env_state"]),
+        args=train_state.metrics_module.UpdateArgs(
+            metrics_args={
+                "approx_dist": ApproxDistributionMetricsModule.UpdateArgs(
+                    states=aux_info["final_env_state"]
+                ),
+                "exact_dist": ExactDistributionMetricsModule.UpdateArgs(),
+                "elbo": ELBOMetricsModule.UpdateArgs(),
+                "eubo": EUBOMetricsModule.UpdateArgs(),
+            }
+        ),
     )
 
     # Perform evaluation computations if needed
@@ -278,7 +301,22 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         {
             "metrics_state": metrics_state,
             "rng_key": jax.random.key(0),  # This key is not used in the process method
-            "args": train_state.metrics_module.ProcessArgs(env_params=env_params),
+            "args": train_state.metrics_module.ProcessArgs(
+                metrics_args={
+                    "approx_dist": ApproxDistributionMetricsModule.ProcessArgs(
+                        env_params=env_params
+                    ),
+                    "exact_dist": ExactDistributionMetricsModule.ProcessArgs(
+                        policy_params=policy_params, env_params=env_params
+                    ),
+                    "elbo": ELBOMetricsModule.ProcessArgs(
+                        policy_params=policy_params, env_params=train_state.env_params
+                    ),
+                    "eubo": EUBOMetricsModule.ProcessArgs(
+                        policy_params=policy_params, env_params=train_state.env_params
+                    ),
+                }
+            ),
         },
     )
     eval_info = jax.lax.cond(
@@ -300,12 +338,15 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log.info(f"Step {idx}")
             log.info(train_info)
             # Get the evaluation metrics
-            eval_info = {f"eval/{key}": value for key, value in eval_info.items()}
-
-            log.info({
-                key: float(value)
+            eval_info = {
+                f"eval/{key}": float(value)
                 for key, value in eval_info.items()
-                if key not in ["eval/2d_marginal_distribution"]
+                if "2d_marginal_distribution" not in key
+            }
+            log.info({
+                key: value
+                for key, value in eval_info.items()
+                if "2d_marginal_distribution" not in key
             })
             if cfg.logging.use_writer:
                 marginal_dist = eval_info["eval/2d_marginal_distribution"]
@@ -382,6 +423,26 @@ def run_experiment(cfg: OmegaConf) -> None:
         rng_key=net_init_key,
     )
 
+    # Partition the model into its learnable parameters and static parts
+    policy_static = eqx.filter(model, eqx.is_array, inverse=True)
+
+    def fwd_policy_fn(
+        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, current_policy_params
+    ) -> chex.Array:
+        del rng_key
+        # Recombine the network parameters with the static parts of the model
+        current_model = eqx.combine(current_policy_params, policy_static)
+        policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
+        return policy_outputs["forward_logits"], policy_outputs
+
+    def bwd_policy_fn(
+        rng_key: chex.PRNGKey, env_obs: gfnx.TObs, current_policy_params
+    ) -> chex.Array:
+        del rng_key
+        current_model = eqx.combine(current_policy_params, policy_static)
+        policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
+        return policy_outputs["backward_logits"], policy_outputs
+
     # Initialize logZ separately
     logZ = jnp.array(0.0)
 
@@ -402,15 +463,52 @@ def run_experiment(cfg: OmegaConf) -> None:
     optimizer = optax.multi_transform(optimizer_defs, param_labels)
     opt_state = optimizer.init(initial_optax_params)
 
-    metrics_module = ApproxDistributionMetricsModule(
-        metrics=["tv", "kl", "2d_marginal_distribution"],
-        env=env,
-        buffer_size=cfg.logging.metric_buffer_size,
+    exploration_schedule = optax.linear_schedule(
+        init_value=cfg.agent.start_eps,
+        end_value=cfg.agent.end_eps,
+        transition_steps=cfg.agent.exploration_steps,
     )
+
+    metrics_module = MultiMetricsModule({
+        "approx_dist": ApproxDistributionMetricsModule(
+            metrics=["tv", "kl", "2d_marginal_distribution"],
+            env=env,
+            buffer_size=cfg.logging.metric_buffer_size,
+        ),
+        "exact_dist": ExactDistributionMetricsModule(
+            metrics=["tv", "kl", "2d_marginal_distribution"],
+            env=env,
+            fwd_policy_fn=fwd_policy_fn,
+            batch_size=cfg.num_envs,
+        ),
+        "elbo": ELBOMetricsModule(
+            env=env,
+            env_params=env_params,
+            fwd_policy_fn=fwd_policy_fn,
+            n_rounds=cfg.metrics.n_rounds,
+            batch_size=cfg.num_envs,
+        ),
+        "eubo": EUBOMetricsModule(
+            env=env,
+            env_params=env_params,
+            bwd_policy_fn=bwd_policy_fn,
+            n_rounds=cfg.metrics.n_rounds,
+            batch_size=cfg.num_envs,
+            rng_key=eval_init_key,
+        ),
+    })
     # Initialize the metrics state
     eval_init_key, new_eval_init_key = jax.random.split(eval_init_key)
     metrics_state = metrics_module.init(
-        new_eval_init_key, metrics_module.InitArgs(env_params=env_params)
+        eval_init_key,
+        metrics_module.InitArgs(
+            metrics_args={
+                "approx_dist": ApproxDistributionMetricsModule.InitArgs(env_params=env_params),
+                "exact_dist": ExactDistributionMetricsModule.InitArgs(env_params=env_params),
+                "elbo": ELBOMetricsModule.InitArgs(),
+                "eubo": EUBOMetricsModule.InitArgs(),
+            }
+        ),
     )
     eval_info = metrics_module.get(metrics_state)
 
@@ -426,6 +524,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         metrics_module=metrics_module,
         metrics_state=metrics_state,
         eval_info=eval_info,
+        exploration_schedule=exploration_schedule,
     )
 
     # Partition the initial TrainState into dynamic (jittable) and static parts
@@ -447,8 +546,12 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     if cfg.logging.use_writer:
         log.info("Initialize writer")
-        log_dir = cfg.logging.log_dir if cfg.logging.log_dir else os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+        log_dir = (
+            cfg.logging.log_dir
+            if cfg.logging.log_dir
+            else os.path.join(
+                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+            )
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
@@ -472,9 +575,13 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Save the final model
     final_train_state = eqx.combine(final_train_state_params, train_state_static)
-    dir = cfg.logging.checkpoint_dir if cfg.logging.checkpoint_dir else os.path.join(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
-        f"checkpoints_{os.getpid()}/",
+    dir = (
+        cfg.logging.checkpoint_dir
+        if cfg.logging.checkpoint_dir
+        else os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+            f"checkpoints_{os.getpid()}/",
+        )
     )
     save_checkpoint(
         os.path.join(dir, "model_and_logZ"),

@@ -1,4 +1,5 @@
 """Abstract base class for all gfnx Environments"""
+
 # TODO: add credits to gymnax
 
 from abc import ABC, abstractmethod
@@ -311,6 +312,17 @@ class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
         raise NotImplementedError
 
     @property
+    def is_topologically_sortable(self) -> bool:
+        """Whether this environment supports returning topological sort of states."""
+        return False
+
+    def get_topological_sort(self) -> chex.Array:
+        """Returns the topological sort of states if this functionality is supported."""
+        if not self.is_topologically_sortable:
+            raise ValueError(f"Environment {self.name} does not support topological sort")
+        raise NotImplementedError
+
+    @property
     def is_enumerable(self) -> bool:
         """Whether this environment supports enumerable operations."""
         return False
@@ -379,7 +391,9 @@ class BaseVecEnvironment(ABC, Generic[TEnvState, TEnvParams]):
         """Whether this environment supports tractable sampling from the GT distribution."""
         return False
 
-    def get_ground_truth_sampling(self, batch_size: int, env_params: TEnvParams) -> TEnvState:
+    def get_ground_truth_sampling(
+        self, rng_key: chex.PRNGKey, batch_size: int, env_params: TEnvParams
+    ) -> TEnvState:
         """
         Returns the ground truth sampling for the hypergrid environment.
         The ground truth sampling is computed as the sum of rewards.

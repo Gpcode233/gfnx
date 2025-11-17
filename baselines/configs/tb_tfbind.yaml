@@ -18,6 +18,9 @@ network:
   hidden_size: 256
   depth: 2
 
+metrics:
+  n_rounds : 10
+
 logging:
   track_each: 1 # in terms of total training steps, not divided by num_envs
   eval_each: 1000 # in terms of total training steps, not divided by num_envs

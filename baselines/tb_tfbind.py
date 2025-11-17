@@ -28,6 +28,8 @@ from omegaconf import OmegaConf
 import gfnx
 from gfnx.metrics.new import (
     ApproxDistributionMetricsModule,
+    ELBOMetricsModule,
+    EUBOMetricsModule,
     MultiMetricsModule,
     MultiMetricsState,
     SWMeanRewardSWMetricsModule,
@@ -284,9 +286,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         rng_key=jax.random.key(0),  # not used, but required by the API
         args=train_state.metrics_module.UpdateArgs(
             metrics_args={
-                "distribution": ApproxDistributionMetricsModule.UpdateArgs(
+                "approx_distribution": ApproxDistributionMetricsModule.UpdateArgs(
                     states=log_info["final_env_state"]
                 ),
+                "elbo": ELBOMetricsModule.UpdateArgs(),
+                "eubo": EUBOMetricsModule.UpdateArgs(),
                 "rd": SWMeanRewardSWMetricsModule.UpdateArgs(
                     rewards=rewards,
                 ),
@@ -308,8 +312,14 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "rng_key": eval_rng_key,
             "args": train_state.metrics_module.ProcessArgs(
                 metrics_args={
-                    "distribution": ApproxDistributionMetricsModule.ProcessArgs(
+                    "approx_distribution": ApproxDistributionMetricsModule.ProcessArgs(
                         env_params=env_params
+                    ),
+                    "elbo": ELBOMetricsModule.ProcessArgs(
+                        policy_params=policy_params, env_params=env_params
+                    ),
+                    "eubo": EUBOMetricsModule.ProcessArgs(
+                        policy_params=policy_params, env_params=env_params
                     ),
                     "rd": SWMeanRewardSWMetricsModule.ProcessArgs(),
                 }
@@ -324,9 +334,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
     )
 
     # Perform the logging via JAX debug callback
-    def logging_callback(
-        idx: int, train_info: dict, eval_info: dict, cfg
-    ):
+    def logging_callback(idx: int, train_info: dict, eval_info: dict, cfg):
         train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
 
         if idx % cfg.logging.eval_each == 0 or idx + 1 == cfg.num_train_steps:
@@ -426,12 +434,49 @@ def run_experiment(cfg: OmegaConf) -> None:
     optimizer = optax.multi_transform(optimizer_defs, param_labels)
     opt_state = optimizer.init(initial_optax_params)
 
+    policy_static = eqx.filter(model, eqx.is_array, inverse=True)
+
+    def fwd_policy_fn(
+        fwd_rng_key: chex.PRNGKey,
+        env_obs: gfnx.TObs,
+        policy_params,  # current_policy_params are network params
+    ) -> chex.Array:
+        # Recombine the network parameters with the static parts of the model
+        current_model = eqx.combine(policy_params, policy_static)
+        policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
+        return policy_outputs["forward_logits"], policy_outputs
+
+    def bwd_policy_fn(
+        bwd_rng_key: chex.PRNGKey,
+        env_obs: gfnx.TObs,
+        policy_params,  # current_policy_params are network params
+    ) -> chex.Array:
+        # Recombine the network parameters with the static parts of the model
+        current_model = eqx.combine(policy_params, policy_static)
+        policy_outputs = jax.vmap(current_model, in_axes=(0,))(env_obs)
+        return policy_outputs["backward_logits"], policy_outputs
+
     metrics_module = MultiMetricsModule(
         metrics={
-            "distribution": ApproxDistributionMetricsModule(
+            "approx_distribution": ApproxDistributionMetricsModule(
                 metrics=["tv", "kl"],
                 env=env,
                 buffer_size=cfg.logging.metric_buffer_size,
+            ),
+            "elbo": ELBOMetricsModule(
+                env=env,
+                env_params=env_params,
+                fwd_policy_fn=fwd_policy_fn,
+                n_rounds=cfg.metrics.n_rounds,
+                batch_size=cfg.num_envs,
+            ),
+            "eubo": EUBOMetricsModule(
+                env=env,
+                env_params=env_params,
+                bwd_policy_fn=bwd_policy_fn,
+                n_rounds=cfg.metrics.n_rounds,
+                batch_size=cfg.num_envs,
+                rng_key=eval_init_key,
             ),
             "rd": SWMeanRewardSWMetricsModule(
                 env=env,
@@ -445,7 +490,11 @@ def run_experiment(cfg: OmegaConf) -> None:
         rng_key=eval_init_key,
         args=metrics_module.InitArgs(
             metrics_args={
-                "distribution": ApproxDistributionMetricsModule.InitArgs(env_params=env_params),
+                "approx_distribution": ApproxDistributionMetricsModule.InitArgs(
+                    env_params=env_params
+                ),
+                "elbo": ELBOMetricsModule.InitArgs(),
+                "eubo": EUBOMetricsModule.InitArgs(),
                 "rd": SWMeanRewardSWMetricsModule.InitArgs(),
             }
         ),
@@ -480,8 +529,12 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     if cfg.logging.use_writer:
         log.info("Initialize writer")
-        log_dir = cfg.logging.log_dir if cfg.logging.log_dir else os.path.join(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+        log_dir = (
+            cfg.logging.log_dir
+            if cfg.logging.log_dir
+            else os.path.join(
+                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir, f"run_{os.getpid()}/"
+            )
         )
         writer.init(
             writer_type=cfg.writer.writer_type,
@@ -505,9 +558,13 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     # Save the final model
     train_state = eqx.combine(train_state_params, train_state_static)
-    dir = cfg.logging.checkpoint_dir if cfg.logging.checkpoint_dir else os.path.join(
-        hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
-        f"checkpoints_{os.getpid()}/",
+    dir = (
+        cfg.logging.checkpoint_dir
+        if cfg.logging.checkpoint_dir
+        else os.path.join(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir,
+            f"checkpoints_{os.getpid()}/",
+        )
     )
     save_checkpoint(
         os.path.join(dir, "model_and_logZ"),

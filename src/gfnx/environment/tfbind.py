@@ -106,3 +106,46 @@ class TFBind8Environment(FixedAutoregressiveSequenceEnvironment):
         """
         rewards = self._get_states_rewards(env_params)
         return rewards.sum()
+
+    @property
+    def is_ground_truth_sampling_tractable(self) -> bool:
+        """Whether this environment supports tractable sampling from the GT distribution."""
+        return True
+
+    def get_ground_truth_sampling(
+        self, rng_key: chex.PRNGKey, batch_size: int, env_params: EnvParams
+    ) -> EnvState:
+        """
+        Returns a batch of terminal states sampled from the ground-truth distribution
+        proportional to rewards over all sequences of length `max_length`.
+
+        Args:
+            rng_key: JAX random key for sampling.
+            batch_size: Number of samples to generate.
+            env_params: Environment parameters.
+
+        Returns:
+            EnvState with shape [batch_size, max_length].
+        """
+        true_distribution = self.get_true_distribution(env_params)
+        flat_distribution = true_distribution.flatten()
+
+        sampled_indices = jax.random.choice(
+            rng_key,
+            a=flat_distribution.size,
+            shape=(batch_size,),
+            p=flat_distribution,
+        )
+
+        sampled_coords_unstacked = jnp.unravel_index(
+            sampled_indices, shape=true_distribution.shape
+        )
+        sampled_tokens = jnp.stack(sampled_coords_unstacked, axis=1)
+
+        return EnvState(
+            tokens=sampled_tokens.astype(jnp.int32),
+            time=jnp.full((batch_size,), self.max_length, dtype=jnp.int32),
+            is_terminal=jnp.ones((batch_size,), dtype=jnp.bool_),
+            is_initial=jnp.zeros((batch_size,), dtype=jnp.bool_),
+            is_pad=jnp.zeros((batch_size,), dtype=jnp.bool_),
+        )
