@@ -1,5 +1,4 @@
 from . import bitseq, corr
-from .dag import load_dag_samples
 from .distances import jensen_shannon_divergence, kl_divergence, total_variation_distance
 from .exploration import (
     ExplorationState,
@@ -7,6 +6,9 @@ from .exploration import (
     apply_epsilon_greedy_vmap,
     create_exploration_schedule,
 )
+from .ising import get_true_ising_J
+from .ising_hbpt_sample import pt_sampler
+from .ising_wolf_sample import wolff_sampler
 from .masking import mask_logits
 from .molecules import (
     QM9_SMALL_BLOCKS,
@@ -51,10 +53,12 @@ __all__ = [
     "get_phylo_initialization_args",
     "jensen_shannon_divergence",
     "kl_divergence",
-    "load_dag_samples",
     "mask_logits",
     "split_traj_to_transitions",
     "total_variation_distance",
     "QM9_SMALL_BLOCKS",
     "QM9_SMALL_FULL_ALPHABET",
+    "wolff_sampler",
+    "pt_sampler",
+    "get_true_ising_J",
 ]

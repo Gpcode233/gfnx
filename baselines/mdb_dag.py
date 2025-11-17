@@ -65,8 +65,6 @@ class GNNPolicy(eqx.Module):
     senders_mlp: eqx.nn.MLP
     receivers_mlp: eqx.nn.MLP
     stop_mlp: eqx.nn.MLP
-    logits_norm: chex.Array
-    jraph_net: jraph.GraphNetwork
 
     def __init__(
         self,
@@ -131,23 +129,6 @@ class GNNPolicy(eqx.Module):
         self.edges_layer_norm = eqx.nn.LayerNorm(emb_size)
         self.globals_layer_norm = eqx.nn.LayerNorm(emb_size)
 
-        @jraph.concatenated_args
-        def update_node_fn(features):
-            return jax.vmap(self.node_mlp, in_axes=(0,))(features)
-
-        @jraph.concatenated_args
-        def update_edge_fn(features):
-            return jax.vmap(self.edge_mlp, in_axes=(0,))(features)
-
-        @jraph.concatenated_args
-        def update_global_fn(features):
-            return jax.vmap(self.global_mlp, in_axes=(0,))(features)
-
-        self.jraph_net = jraph.GraphNetwork(
-            update_node_fn=update_node_fn,
-            update_edge_fn=update_edge_fn,
-            update_global_fn=update_global_fn,
-        )
         self.attention_proj = eqx.nn.Linear(emb_size, emb_size * 3, key=self_attention_proj_key)
         self.attention = eqx.nn.MultiheadAttention(
             num_heads=num_heads,
@@ -159,7 +140,6 @@ class GNNPolicy(eqx.Module):
         )
         self.post_attention_nodes_norm = eqx.nn.LayerNorm(emb_size)
         self.post_attention_globals_norm = eqx.nn.LayerNorm(emb_size)
-        self.logits_norm = jnp.ones((1,))
 
         self.senders_mlp = eqx.nn.MLP(
             in_size=emb_size,
@@ -193,8 +173,26 @@ class GNNPolicy(eqx.Module):
             globals=jax.vmap(self.global_embeddings, in_axes=(0,))(graph_tuple.globals),
         )
 
+        @jraph.concatenated_args
+        def update_node_fn(features):
+            return jax.vmap(self.node_mlp, in_axes=(0,))(features)
+
+        @jraph.concatenated_args
+        def update_edge_fn(features):
+            return jax.vmap(self.edge_mlp, in_axes=(0,))(features)
+
+        @jraph.concatenated_args
+        def update_global_fn(features):
+            return jax.vmap(self.global_mlp, in_axes=(0,))(features)
+
+        jraph_net = jraph.GraphNetwork(
+            update_node_fn=update_node_fn,
+            update_edge_fn=update_edge_fn,
+            update_global_fn=update_global_fn,
+        )
+
         for _ in range(self.num_layers):
-            updates = self.jraph_net(features)
+            updates = jraph_net(features)
             features = features._replace(
                 nodes=jax.vmap(self.nodes_layer_norm, in_axes=(0,))(
                     features.nodes + updates.nodes
@@ -215,7 +213,7 @@ class GNNPolicy(eqx.Module):
         q, k, v = jnp.split(node_features, 3, axis=-1)
         node_features = jax.vmap(self.attention, in_axes=(0, 0, 0))(q, k, v)
         node_features = node_features.reshape(batch_size * num_variables, -1)  # [B * N, emb_size]
-        node_features = jax.vmap(self.post_attention_nodes_norm, in_axes=(0))(node_features)
+        node_features = jax.vmap(self.post_attention_nodes_norm, in_axes=(0,))(node_features)
         global_features = jax.vmap(self.post_attention_globals_norm, in_axes=(0,))(
             features.globals[:batch_size]
         )
@@ -227,10 +225,8 @@ class GNNPolicy(eqx.Module):
 
         logits = jax.lax.batch_matmul(senders, receivers.transpose(0, 2, 1))
         logits = logits.reshape(batch_size, -1)
-        logits = logits / self.logits_norm
 
         stop = jax.vmap(self.stop_mlp, in_axes=(0,))(global_features)
-        stop = stop / self.logits_norm
 
         fwd_logits = jnp.concatenate([logits, stop], axis=-1)
         bwd_logits = jnp.zeros((batch_size, self.n_bwd_actions))
@@ -293,6 +289,7 @@ class TrainState(NamedTuple):
     env_params: chex.Array
     exploration_schedule: optax.Schedule
     model: GNNPolicy
+    target_model: GNNPolicy
     optimizer: optax.GradientTransformation
     opt_state: optax.OptState
     metrics_module: MultiMetricsModule
@@ -322,7 +319,8 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         rng_key, exploration_key = jax.random.split(rng_key)
         batch_size = logits.shape[0]
         exploration_mask = jax.random.bernoulli(exploration_key, cur_eps, (batch_size,))
-        logits = jnp.where(exploration_mask[..., jnp.newaxis], 0, logits)
+        logits = jnp.where(exploration_mask[..., None], 0, logits)
+        policy_outputs = eqx.tree_at(lambda x: x["forward_logits"], policy_outputs, logits)
         return logits, policy_outputs
 
     # Generating the trajectory and splitting it into transitions
@@ -364,7 +362,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         ).squeeze(-1)
 
         # Compute the stats for the next state
-        next_policy_outputs = model(transitions.next_obs)
+        next_policy_outputs = train_state.target_model(transitions.next_obs)
         next_fwd_logits = next_policy_outputs["forward_logits"]
         next_fwd_invalid_mask = env.get_invalid_mask(transitions.next_state, env_params)
         masked_next_fwd_logits = gfnx.utils.mask_logits(next_fwd_logits, next_fwd_invalid_mask)
@@ -385,17 +383,13 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             env_params,
         )
 
-        # Compute the DB loss with masking
-        num_transition = jnp.logical_not(transitions.pad).sum()
-        loss = optax.l2_loss(
-            jnp.where(transitions.pad, 0.0, next_sink_logprobs + fwd_logprobs),
-            jnp.where(
-                transitions.pad,
-                0.0,
-                sink_logprobs + bwd_logprobs + delta_score,
-            ),
-        ).sum()
-        return loss / num_transition
+        # Compute the MDB loss with masking
+        done_or_pad = transitions.done | transitions.pad
+        error = next_sink_logprobs + fwd_logprobs - sink_logprobs - bwd_logprobs - delta_score
+        error = jnp.where(done_or_pad, 0.0, error)
+        loss = optax.huber_loss(error).sum() / jnp.logical_not(done_or_pad).sum()
+
+        return loss
 
     mean_loss, grads = eqx.filter_value_and_grad(loss_fn)(train_state.model)
     # Step 3. Update the model with grads
@@ -405,6 +399,16 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         eqx.filter(train_state.model, eqx.is_array),
     )
     model = eqx.apply_updates(train_state.model, updates)
+
+    # Update the target model
+    model_params, _ = eqx.partition(model, eqx.is_array)
+    target_params, target_static = eqx.partition(train_state.target_model, eqx.is_array)
+    new_target_params = jax.lax.cond(
+        idx % train_state.config.agent.target_update_every == 0,
+        lambda: jax.tree.map(lambda x: x, model_params),
+        lambda: target_params,
+    )
+    new_target_model = eqx.combine(new_target_params, target_static)
 
     metrics_state = train_state.metrics_state
     metrics_module = train_state.metrics_module
@@ -494,7 +498,11 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
 
     # Return the updated train state
     return train_state._replace(
-        rng_key=rng_key, model=model, opt_state=opt_state, metrics_state=metrics_state
+        rng_key=rng_key,
+        model=model,
+        target_model=new_target_model,
+        opt_state=opt_state,
+        metrics_state=metrics_state,
     )
 
 
@@ -511,19 +519,27 @@ def run_experiment(cfg: OmegaConf) -> None:
     eval_init_key = jax.random.PRNGKey(cfg.eval_seed)
 
     # Load the samples
-    train_samples = gfnx.utils.load_dag_samples(cfg.environment.train_samples_path)
-    num_variables = train_samples.shape[1]
+    train_samples = gfnx.utils.dag.generate_dataset(
+        data_seed=cfg.env_seed,
+        num_variables=cfg.environment.num_variables,
+        num_edges_per_node=cfg.environment.num_edges_per_node,
+        num_train_samples=cfg.environment.num_train_samples,
+        loc_edges=cfg.environment.loc_edges,
+        scale_edges=cfg.environment.scale_edges,
+        obs_scale=cfg.environment.obs_scale,
+        folder=cfg.logging.log_dir,
+    )
     # Define the reward function for the environment
     if cfg.environment.prior.type == "uniform":
         prior = gfnx.reward.UniformDAGPrior(
-            num_variables=num_variables,
+            num_variables=cfg.environment.num_variables,
         )
     else:
         raise ValueError(f"Unknown prior type: {cfg.environment.prior.type}")
 
     if cfg.environment.likelihood.type == "linear_gaussian_score":
         likelihood = gfnx.reward.LinearGaussianScore(
-            data_path=cfg.environment.train_samples_path,
+            data=train_samples,
             prior_mean=cfg.environment.likelihood.prior_mean,
             prior_scale=cfg.environment.likelihood.prior_scale,
             obs_scale=cfg.environment.likelihood.obs_scale,
@@ -542,14 +558,14 @@ def run_experiment(cfg: OmegaConf) -> None:
     # Initialize the environment and its inner parameters
     env = gfnx.environment.DAGEnvironment(
         reward_module,
-        num_variables=num_variables,
+        num_variables=cfg.environment.num_variables,
     )
     env_params = env.init(env_init_key)
 
     rng_key, net_init_key = jax.random.split(rng_key)
     # Initialize the network
     model = GNNPolicy(
-        num_nodes=num_variables,
+        num_nodes=cfg.environment.num_variables,
         num_layers=cfg.network.num_layers,
         mlp_num_layers=cfg.network.mlp_num_layers,
         emb_size=cfg.network.embedding_size,
@@ -557,6 +573,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         n_bwd_actions=env.backward_action_space.n,
         rng_key=net_init_key,
     )
+    target_model = jax.tree.map(lambda x: x, model)  # Copy of the model
     exploration_schedule = optax.linear_schedule(
         init_value=cfg.agent.start_eps,
         end_value=cfg.agent.end_eps,
@@ -564,7 +581,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     )
 
     # Initialize the optimizer
-    optimizer = optax.adamw(learning_rate=cfg.agent.learning_rate)
+    optimizer = optax.adam(learning_rate=cfg.agent.learning_rate)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
     # Initialize the backward policy function for correlation computation
     policy_static = eqx.filter(model, eqx.is_array, inverse=True)
@@ -577,15 +594,21 @@ def run_experiment(cfg: OmegaConf) -> None:
 
     def edge_score_transform_fn(env_state: gfnx.DAGEnvState, log_score: chex.Array) -> chex.Array:
         adjacency_matrix = env_state.adjacency_matrix
+        eye = jnp.eye(env_state.adjacency_matrix.shape[1], dtype=jnp.bool)[None, :, :]
         log_score = jnp.expand_dims(log_score, axis=(-1, -2))
-        edge_log_score = jax.nn.logsumexp(adjacency_matrix * log_score, axis=0).reshape(-1)
-        return edge_log_score
+        # logP(E) = logsumexp_G[logP(E | G) + logP(G)]
+        log_score = jnp.where(adjacency_matrix | eye, log_score, -jnp.inf)
+        edge_log_score = jax.nn.logsumexp(log_score, axis=0)
+        return edge_log_score.reshape(-1)
 
     def path_score_transform_fn(env_state: gfnx.DAGEnvState, log_score: chex.Array) -> chex.Array:
         closure = jnp.transpose(env_state.closure_T, (0, 2, 1))
-        score = jnp.expand_dims(log_score, axis=(-1, -2))
-        path_score = jax.nn.logsumexp(closure * score, axis=0).reshape(-1)
-        return path_score
+        eye = jnp.eye(env_state.closure_T.shape[1], dtype=jnp.bool)[None, :, :]
+        log_score = jnp.expand_dims(log_score, axis=(-1, -2))
+        # logP(path(i, j)) = logsumexp_G[logP(path(i, j) | G) + logP(G)]
+        log_score = jnp.where(closure | eye, log_score, -jnp.inf)
+        path_log_score = jax.nn.logsumexp(log_score, axis=0)
+        return path_log_score.reshape(-1)
 
     def markov_blanket_transform_fn(
         env_state: gfnx.DAGEnvState, log_score: chex.Array
@@ -593,9 +616,12 @@ def run_experiment(cfg: OmegaConf) -> None:
         markov_blanket = jax.vmap(lambda x: get_markov_blanket(x), in_axes=0)(
             env_state.adjacency_matrix
         )  # (num_graphs, num_variables, num_variables)
+        eye = jnp.eye(env_state.adjacency_matrix.shape[1], dtype=jnp.bool)[None, :, :]
         log_score = jnp.expand_dims(log_score, axis=(-1, -2))
-        markov_blanket_score = jax.nn.logsumexp(markov_blanket * log_score, axis=0).reshape(-1)
-        return markov_blanket_score
+        # logP(mb(i, j)) = logsumexp_G[logP(mb(i, j) | G) + logP(G)]
+        log_score = jnp.where(markov_blanket | eye, log_score, -jnp.inf)
+        markov_blanket_log_score = jax.nn.logsumexp(log_score, axis=0)
+        return markov_blanket_log_score.reshape(-1)
 
     metrics_module = MultiMetricsModule({
         "distribution": ApproxDistributionMetricsModule(
@@ -632,10 +658,8 @@ def run_experiment(cfg: OmegaConf) -> None:
         ),
     })
 
-    eval_init_key, correlation_init_key = jax.random.split(eval_init_key)
-
     # Construct the test set
-    test_set_adjacency_matrix = gfnx.utils.dag.construct_all_dags(env_params.num_variables)
+    test_set_adjacency_matrix = gfnx.utils.dag.construct_all_dags(cfg.environment.num_variables)
     test_set_closure_T = jax.vmap(lambda x: env._single_compute_closure(x.T), in_axes=0)(
         test_set_adjacency_matrix
     )
@@ -680,6 +704,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         env_params=env_params,
         exploration_schedule=exploration_schedule,
         model=model,
+        target_model=target_model,
         optimizer=optimizer,
         opt_state=opt_state,
         metrics_module=metrics_module,

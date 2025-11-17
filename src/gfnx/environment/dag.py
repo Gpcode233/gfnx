@@ -329,7 +329,7 @@ class DAGEnvironment(BaseVecEnvironment[EnvState, EnvParams]):
             )
         )(all_adjacency_matrices)
         log_reward = self.reward_module.log_reward(all_dags, env_params)
-        log_reward = log_reward - jnp.median(log_reward)  # many outliers -> median
+        log_reward = log_reward - jnp.max(log_reward)  # softmax trick
         reward = jnp.exp(log_reward)
         return reward
 

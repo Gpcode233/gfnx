@@ -7,7 +7,6 @@ from scipy.special import gammaln
 
 from ..base import TAction, TLogReward, TRewardParams
 from ..environment import DAGEnvParams, DAGEnvState
-from ..utils.dag import load_dag_samples
 
 
 class BaseDAGLikelihood:
@@ -111,19 +110,23 @@ class ZeroScore(BaseDAGLikelihood):
 
 
 class LinearGaussianScore(BaseDAGLikelihood):
+    @chex.dataclass(frozen=True)
+    class LinearGaussianScoreParams:
+        data: chex.Array
+
     def __init__(
         self,
-        data_path: str,
+        data: chex.Array,
         prior_mean: float = 0.0,
         prior_scale: float = 1.0,
         obs_scale: float = math.sqrt(0.1),
     ):
-        self.data_path = data_path
+        self.data = data
         self.prior_mean = prior_mean
         self.prior_scale = prior_scale
         self.obs_scale = obs_scale
 
-    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> TRewardParams:
+    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> LinearGaussianScoreParams:
         """
         Initialize the likelihood.
         Args:
@@ -131,15 +134,17 @@ class LinearGaussianScore(BaseDAGLikelihood):
         - dummy_state: DAGEnvState, shape [1, ...], a dummy state
 
          Returns:
-        - Loaded samples as a dictionary with key "data"
+        - Loaded samples as a LinearGaussianScoreParams
         """
-        data = load_dag_samples(self.data_path)
-        return {"data": data}
+        return self.LinearGaussianScoreParams(data=self.data)
 
     def _local_score(
-        self, variables: chex.Array, parents: chex.Array, likelihood_params: TRewardParams
+        self,
+        variables: chex.Array,
+        parents: chex.Array,
+        likelihood_params: LinearGaussianScoreParams,
     ) -> TLogReward:
-        data = likelihood_params["data"]
+        data = likelihood_params.data
         num_samples, num_variables = data.shape
         masked_data = data * parents[:, jnp.newaxis]
 
@@ -160,6 +165,11 @@ class LinearGaussianScore(BaseDAGLikelihood):
 
 
 class BGeScore(BaseDAGLikelihood):
+    @chex.dataclass(frozen=True)
+    class BGeScoreParams:
+        r_matrix: chex.Array
+        log_gamma_term: chex.Array
+
     def __init__(
         self,
         data: chex.Array,
@@ -200,9 +210,24 @@ class BGeScore(BaseDAGLikelihood):
             + 0.5 * (self.alpha_w - self.num_variables + 2 * all_parents + 1) * jnp.log(self.t)
         )
 
+    def init(self, rng_key: chex.PRNGKey, dummy_state: DAGEnvState) -> BGeScoreParams:
+        """
+        Initialize the likelihood.
+        Args:
+        - rng_key: chex.PRNGKey, random key
+        - dummy_state: DAGEnvState, shape [1, ...], a dummy state
+
+        Returns:
+        - Precomputed BGeScore parameters
+        """
+        return self.BGeScoreParams(r_matrix=self.r_matrix, log_gamma_term=self.log_gamma_term)
+
     def _local_score(
-        self, variables: chex.Array, parents: chex.Array, likelihood_params: TRewardParams
+        self, variables: chex.Array, parents: chex.Array, likelihood_params: BGeScoreParams
     ) -> TLogReward:
+        r_matrix = likelihood_params.r_matrix
+        log_gamma_term = likelihood_params.log_gamma_term
+
         def _logdet(array: chex.Array, mask: chex.Array) -> chex.Array:
             mask = mask[:, None, :] * mask[:, :, None]
             array = mask * array + (1.0 - mask) * jnp.eye(self.num_variables)
@@ -215,8 +240,8 @@ class BGeScore(BaseDAGLikelihood):
 
         factor = self.num_samples + self.alpha_w - self.num_variables + num_parents
 
-        log_term_r = 0.5 * factor * _logdet(self.r_matrix, parents) - 0.5 * (factor + 1) * _logdet(
-            self.r_matrix, parents_and_variable
+        log_term_r = 0.5 * factor * _logdet(r_matrix, parents) - 0.5 * (factor + 1) * _logdet(
+            r_matrix, parents_and_variable
         )
 
-        return self.log_gamma_term[num_parents] + log_term_r
+        return log_gamma_term[num_parents] + log_term_r

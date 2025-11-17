@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax.scipy.stats import rankdata
 
+
 @jax.jit
 def pearson_corr(a: chex.Array, b: chex.Array):
     """Computation of Pearson correlation.
@@ -16,7 +17,7 @@ def pearson_corr(a: chex.Array, b: chex.Array):
 
 
 @partial(jax.jit, static_argnames=["method", "dtype"])
-def spearman_corr(a, b, method="average", dtype=jnp.float32):
+def spearman_corr(a: chex.Array, b: chex.Array, method="average", dtype=jnp.float32):
     """
     JIT-compatible Spearman correlation that propagates NaNs. Handles integer and float inputs.
     """

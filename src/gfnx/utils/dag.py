@@ -14,25 +14,6 @@ import networkx as nx
 import numpy as np
 
 
-def load_dag_samples(samples_path: Path) -> chex.Array:
-    """
-    Loads samples and extracts basic information needed for DAG environment setup.
-
-    Args:
-        samples_path: Path to the file containing the samples.
-
-    Returns:
-        The loaded samples array
-    """
-    with open(samples_path, "r") as f:
-        reader = csv.reader(f)
-        rows = list(reader)
-
-    # Skip the header row
-    samples = jnp.array(rows[1:], dtype=jnp.float32)
-    return samples
-
-
 def uint8bits_to_int32(bits: chex.Array) -> chex.Array:
     """
     Convert an array of uint8 bits to an array of int32 bits.
@@ -209,39 +190,27 @@ def sample_from_linear_gaussian(graph, num_samples, rng=None):
     return nodes, samples
 
 
-def write_csv(file_path, header, data):
-    with open(file_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        writer.writerows(data)
-
-
-# TODO: (agarkovv) Review the need of test data
 def generate_dataset(
-    folder,
-    train_seed=0,
-    test_seed=1,
+    data_seed=0,
     num_variables=5,
     num_edges_per_node=1,
     num_train_samples=100,
-    num_test_samples=100,
     loc_edges=0.0,
     scale_edges=1.0,
     obs_scale=math.sqrt(0.1),
+    folder: Path | None = None,
 ):
-    folder = Path(folder)
-    train_rng = np.random.default_rng(seed=train_seed)
-    test_rng = np.random.default_rng(seed=test_seed)
+    data_rng = np.random.default_rng(seed=data_seed)
 
     # Generate DAG
     graph = sample_erdos_renyi_graph(
         num_variables=num_variables,
         num_edges_per_node=num_edges_per_node,
-        rng=train_rng,
+        rng=data_rng,
     )
     graph = sample_linear_gaussian(
         graph,
-        rng=train_rng,
+        rng=data_rng,
         loc_edges=loc_edges,
         scale_edges=scale_edges,
         obs_scale=obs_scale,
@@ -250,54 +219,52 @@ def generate_dataset(
     if not nx.is_directed_acyclic_graph(graph):
         raise RuntimeError("The graph is not acyclic.")
 
-    # Sample train/test data
-    train_header, train_data = sample_from_linear_gaussian(
-        graph, num_samples=num_train_samples, rng=train_rng
+    # Sample train data
+    node_names, train_data = sample_from_linear_gaussian(
+        graph, num_samples=num_train_samples, rng=data_rng
     )
-    test_header, test_data = sample_from_linear_gaussian(
-        graph, num_samples=num_test_samples, rng=test_rng
-    )
-
-    # Create output folder
-    folder.mkdir(exist_ok=True)
-
-    # Save graph object
-    with open(folder / "graph.pkl", "wb") as f:
-        pickle.dump(graph, f)
-
-    # Save adjacency
     adjacency = nx.to_numpy_array(graph, weight=None)
-    with open(folder / "adjacency.npy", "wb") as f:
-        np.save(f, adjacency)
 
-    # Save data
-    write_csv(folder / "train_data.csv", train_header, train_data)
-    write_csv(folder / "test_data.csv", test_header, test_data)
+    if folder is not None:
+        # Create output folder
+        folder = Path(folder) / "train_data"
+        folder.mkdir(exist_ok=True)
+        # Save graph object
+        with open(folder / "graph.pkl", "wb") as f:
+            pickle.dump(graph, f)
+        # Save adjacency
+        with open(folder / "adjacency.npy", "wb") as f:
+            np.save(f, adjacency)
+        # Save data
+        with open(folder / "train_data.csv", "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(node_names)
+            writer.writerows(train_data)
 
-    # Save metadata
-    metadata = {
-        "model_type": graph.graph.get("type", "unknown"),
-        "num_variables": num_variables,
-        "num_edges_per_node": num_edges_per_node,
-        "num_train_samples": num_train_samples,
-        "num_test_samples": num_test_samples,
-        "train_seed": train_seed,
-        "test_seed": test_seed,
-        "loc_edges": loc_edges,
-        "scale_edges": scale_edges,
-        "obs_scale": obs_scale,
-        "nodes": [],
-    }
+        # Save metadata
+        metadata = {
+            "model_type": graph.graph.get("type", "unknown"),
+            "num_variables": num_variables,
+            "num_edges_per_node": num_edges_per_node,
+            "num_train_samples": num_train_samples,
+            "data_seed": data_seed,
+            "loc_edges": loc_edges,
+            "scale_edges": scale_edges,
+            "obs_scale": obs_scale,
+            "nodes": [],
+        }
 
-    for node in train_header:
-        attrs = graph.nodes[node]
-        metadata["nodes"].append({
-            "name": node,
-            "parents": attrs["parents"],
-            "cpd": attrs["cpd"].tolist(),
-            "bias": attrs["bias"],
-            "obs_scale": attrs["obs_scale"],
-        })
+        for node in node_names:
+            attrs = graph.nodes[node]
+            metadata["nodes"].append({
+                "name": node,
+                "parents": attrs["parents"],
+                "cpd": attrs["cpd"].tolist(),
+                "bias": attrs["bias"],
+                "obs_scale": attrs["obs_scale"],
+            })
 
-    with open(folder / "graph_metadata.json", "w") as f:
-        json.dump(metadata, f, indent=4)
+        with open(folder / "graph_metadata.json", "w") as f:
+            json.dump(metadata, f, indent=4)
+
+    return train_data

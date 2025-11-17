@@ -71,7 +71,7 @@ class BaseCorrelationMetricsModule(BaseMetricsModule):
         bwd_policy_fn: TPolicyFn,
         n_rounds: int,
         batch_size: int = 1,
-        transform_fn: Callable[[TEnvState, jnp.ndarray], jnp.ndarray] = lambda x, y: y,
+        transform_fn: Callable[[TEnvState, jnp.ndarray], jnp.ndarray] | None = None,
     ):
         """Initialize the correlation metric module.
 
@@ -87,7 +87,7 @@ class BaseCorrelationMetricsModule(BaseMetricsModule):
         self.bwd_policy_fn = bwd_policy_fn
         self.n_rounds = n_rounds
         self.batch_size = batch_size
-        self.transform_fn = transform_fn
+        self.transform_fn = transform_fn if transform_fn is not None else lambda x, y: y
 
     # Ensure the module has a consistent interface
     UpdateArgs = EmptyUpdateArgs
