@@ -8,7 +8,7 @@ num_envs: 16
 agent:
   learning_rate: 5e-4
   logZ_learning_rate: 0.05 # New field
-  start_eps: 1.0
+  start_eps: 0.0
   end_eps: 0.0
   exploration_steps: 50_000 # Should be <= of num_train_steps
   train_backward: true
