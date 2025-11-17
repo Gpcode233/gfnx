@@ -107,6 +107,7 @@ class TrainState(NamedTuple):
     opt_state: optax.OptState
     metrics_module: ApproxDistributionMetricsModule
     metrics_state: ApproxDistributionMetricsState
+    eval_info: dict
 
 @eqx.filter_jit
 def train_step(idx: int, train_state: TrainState) -> TrainState:
@@ -252,12 +253,18 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "args": metrics_module.ProcessArgs(env_params=env_params),
         },
     )
+    eval_info = jax.lax.cond(
+        is_eval_step,
+        lambda metrics_state: train_state.metrics_module.get(metrics_state),
+        lambda metrics_state: train_state.eval_info,  # Do nothing if not eval step
+        metrics_state,
+    )
 
     # Perform the logging via JAX debug callback
     def logging_callback(
         idx: int,
         train_info: dict,
-        metrics_state: ApproxDistributionMetricsState,
+        eval_info: dict,
         cfg,
     ):
         train_info = {f"train/{key}": float(value) for key, value in train_info.items()}
@@ -265,7 +272,6 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             log.info(f"Step {idx}")
             log.info(train_info)
             # Get the evaluation metrics
-            eval_info = metrics_module.get(metrics_state)
             eval_info = {f"eval/{key}": value for key, value in eval_info.items()}
 
             log.info({
@@ -300,7 +306,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
             "mean_log_reward": log_info["log_gfn_reward"].mean(),
             "rl_reward": log_info["log_gfn_reward"].mean() + log_info["entropy"].mean(),
         },
-        metrics_state,
+        eval_info,
         train_state.config,
         ordered=True,
     )
@@ -310,6 +316,7 @@ def train_step(idx: int, train_state: TrainState) -> TrainState:
         target_model=new_trgt_model,
         opt_state=opt_state,
         metrics_state=metrics_state,
+        eval_info=eval_info,
     )
 
 
@@ -365,6 +372,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     metrics_state = metrics_module.init(
         new_eval_init_key, metrics_module.InitArgs(env_params=env_params)
     )
+    eval_info = metrics_module.get(metrics_state)
 
     train_state = TrainState(
         rng_key=rng_key,
@@ -377,6 +385,7 @@ def run_experiment(cfg: OmegaConf) -> None:
         opt_state=opt_state,
         metrics_module=metrics_module,
         metrics_state=metrics_state,
+        eval_info=eval_info,
     )
     # Split train state into parameters and static parts to make jit work.
     train_state_params, train_state_static = eqx.partition(train_state, eqx.is_array)
