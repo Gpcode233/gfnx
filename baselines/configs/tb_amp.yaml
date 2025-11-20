@@ -7,13 +7,13 @@ num_envs: 16
 
 agent:
   learning_rate: 1e-3
-  weight_decay: 1e-5
-  logZ_learning_rate: 0.1
+  weight_decay: 1e-4
+  logZ_learning_rate: 0.64
   eps_exploration: 0.00
   train_backward: true
 
-  start_eps: 1e-3
-  end_eps: 1e-3
+  start_eps: 1e-2
+  end_eps: 1e-2
   exploration_steps: 50_000 # Should be <= of num_train_steps
 
 network:

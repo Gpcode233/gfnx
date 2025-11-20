@@ -454,7 +454,7 @@ def run_experiment(cfg: OmegaConf) -> None:
     )
 
     # Initialize logZ separately
-    logZ = jnp.array(0.0)
+    logZ = jnp.array(150.0)
 
     # Prepare parameters for Optax
     model_params_init = eqx.filter(model, eqx.is_array)
