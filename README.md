@@ -29,7 +29,7 @@
 ### Install the latest release
 
 ```
-pip install git+https://github.com/d-tiapkin/gfnx.git
+pip install gfnx
 ```
 
 Verify the install with:
